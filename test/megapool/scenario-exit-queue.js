@@ -2,6 +2,7 @@ import { getMegapoolForNode, getValidatorInfo } from '../_helpers/megapool';
 import assert from 'assert';
 import { RocketDepositPool, RocketNodeDeposit, RocketNodeStaking } from '../_utils/artifacts';
 import { assertBN } from '../_helpers/bn';
+import { checkMegapoolInvariants } from '../_helpers/invariants';
 
 const launchValue = '32'.ether;
 const milliToWei = 1000000000000000n;
@@ -78,4 +79,6 @@ export async function exitQueue(nodeAddress, validatorIndex) {
     assertBN.equal(deltas.nodeBond + deltas.userCapital + deltas.nodeQueuedBond + deltas.userQueuedCapital, -launchValue);
     assertBN.equal(deltas.nodeCredit, expectedCredit);
     assertBN.equal(activeValidatorCount, activeValidatorCountBefore - 1n);
+
+    await checkMegapoolInvariants()
 }

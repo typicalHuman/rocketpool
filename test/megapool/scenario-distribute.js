@@ -6,6 +6,7 @@ import {
     RocketVoterRewards,
 } from '../_utils/artifacts';
 import { assertBN } from '../_helpers/bn';
+import { checkMegapoolInvariants } from '../_helpers/invariants';
 
 const hre = require('hardhat');
 const ethers = hre.ethers;
@@ -75,4 +76,6 @@ export async function distributeMegapool(megapool) {
     assertBN.equal(balanceDeltas.pdaoBalance, expectedProtocolDAORewards);
     assertBN.equal(balanceDeltas.rethBalance + balanceDeltas.nodeDebt, expectedRethRewards);
     assertBN.equal(balancesAfter.pendingRewards, 0n);
+
+    await checkMegapoolInvariants()
 }

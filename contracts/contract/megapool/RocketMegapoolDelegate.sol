@@ -736,11 +736,14 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         uint256 newBondRequirement = rocketNodeDeposit.getBondRequirement(_newValidatorCount);
         uint256 effectiveBond = nodeBond + nodeQueuedBond;
         _nodeShare = 0;
-        if (newBondRequirement < nodeBond) {
+        if (newBondRequirement < effectiveBond) {
             _nodeShare = effectiveBond - newBondRequirement;
         }
         if (_nodeShare > _value) {
             _nodeShare = _value;
+        }
+        if (_nodeShare > nodeBond) {
+            _nodeShare = nodeBond;
         }
         _userShare = _value - _nodeShare;
     }

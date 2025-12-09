@@ -1,6 +1,7 @@
 // Reduce bond
 import { RocketNodeStaking } from '../_utils/artifacts';
 import { assertBN } from '../_helpers/bn';
+import { checkMegapoolInvariants } from '../_helpers/invariants';
 
 export async function reduceBond(megapool, amount) {
     const [
@@ -43,4 +44,6 @@ export async function reduceBond(megapool, amount) {
     assertBN.equal(nodeEthBorrowedDelta, amount);
     assertBN.equal(nodeMegapoolEthBondedDelta, -amount);
     assertBN.equal(nodeMegapoolEthBorrowedDelta, amount);
+
+    await checkMegapoolInvariants()
 }

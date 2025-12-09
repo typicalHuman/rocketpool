@@ -88,7 +88,6 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
 
     const queueIndex = await rocketDepositPool.getQueueIndex();
     const expressQueueRate = await rocketDAOProtocolSettingsDeposit.getExpressQueueRate();
-    const nextAssignmentIsExpress = queueIndex % (expressQueueRate + 1n) !== 0n;
 
     async function getData() {
         let data = await Promise.all([
@@ -142,6 +141,9 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
 
     const data1 = await getData();
 
+    const expressQueueLengthAfterDeposit = useExpressTicket ? data1.expressQueueLength + 1n : data1.expressQueueLength;
+    const nextAssignmentIsExpress = (queueIndex % (expressQueueRate + 1n) !== expressQueueRate) && expressQueueLengthAfterDeposit !== 0n;
+
     const assignmentsEnabled = await rocketDAOProtocolSettingsDeposit.getAssignDepositsEnabled();
     const depositPoolCapacity = await rocketDepositPool.getBalance();
     const amountRequired = '32'.ether - bondAmount;
@@ -154,6 +156,8 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
         const tx = await rocketNodeDeposit.connect(node).depositWithCredit(bondAmount, useExpressTicket, depositData.pubkey, depositData.signature, depositDataRoot, { value: bondAmount - creditAmount });
         await tx.wait();
     }
+
+    const megapool = await getMegapoolForNode(node);
 
     const data2 = await getData();
 
@@ -187,31 +191,47 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
 
     const minipoolInQueue = data1.minipoolQueueLength > 0n;
 
-    const expectSelfAssignment =
-        !minipoolInQueue &&
+    const expectAssignment = !minipoolInQueue &&
         assignmentsEnabled &&
-        depositPoolCapacity >= amountRequired &&
+        depositPoolCapacity >= amountRequired;
+
+    let expectSelfAssignment =
+        expectAssignment &&
         (
-            nextAssignmentIsExpress && data1.expressQueueLength === 0n ||
-            !nextAssignmentIsExpress && data1.standardQueueLength === 0n
+            (useExpressTicket && data1.expressQueueLength === 0n && nextAssignmentIsExpress) ||
+            (!useExpressTicket && data1.standardQueueLength === 0n)
         );
+
+    const queueTop = await rocketDepositPool.getQueueTop();
+    let expectMegapoolAssignment = expectSelfAssignment || (expectAssignment && (queueTop[0] === megapool.target));
 
     if (useExpressTicket) {
         assertBN.equal(numExpressTicketsDelta, -1n, 'Did not consume express ticket');
-        if (!expectSelfAssignment) {
-            assertBN.equal(expressQueueLengthDelta, 1n, 'Express queue did not grow by 1');
-            assertBN.equal(standardQueueLengthDelta, 0n, 'Standard queue grew');
+        if (expectAssignment) {
+            if (nextAssignmentIsExpress) {
+                assertBN.equal(expressQueueLengthDelta, 0n, 'Express queue changed');
+                assertBN.equal(standardQueueLengthDelta, 0n, 'Standard queue changed');
+            } else {
+                assertBN.equal(expressQueueLengthDelta, 1n, 'Express queue did not grow by 1');
+                assertBN.equal(standardQueueLengthDelta, -1n, 'Standard queue did not shrink by 1');
+            }
         }
     } else {
         assertBN.equal(numExpressTicketsDelta, 0n, 'Express ticket count incorrect');
-        if (!expectSelfAssignment) {
-            assertBN.equal(expressQueueLengthDelta, 0n, 'Express queue grew');
-            assertBN.equal(standardQueueLengthDelta, 1n, 'Standard queue did not grow by 1');
+        if (expectAssignment) {
+            if (nextAssignmentIsExpress) {
+                console.log(data1);
+                console.log(data2);
+                assertBN.equal(expressQueueLengthDelta, -1n, 'Express queue did not shrink by 1');
+                assertBN.equal(standardQueueLengthDelta, 1n, 'Standard queue did not grow by 1');
+            } else {
+                assertBN.equal(expressQueueLengthDelta, 0n, 'Express queue changed');
+                assertBN.equal(standardQueueLengthDelta, 0n, 'Standard queue changed');
+            }
         }
     }
 
     // Confirm state of new validator
-    const megapool = await getMegapoolForNode(node);
     const validatorInfo = await getValidatorInfo(megapool, data1.numValidators);
 
     assertBN.equal(nodeBondDelta + nodeQueuedBondDelta, bondAmount, 'Incorrect node capital');
@@ -226,9 +246,7 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
         assertBN.equal(assignedValueDelta, 0n, 'Incorrect assigned value');
         assertBN.equal(userQueuedCapitalDelta, launchValue - bondAmount);
         assertBN.equal(nodeQueuedBondDelta, bondAmount);
-    }
-    else if (expectSelfAssignment)
-    {
+    } else if (expectSelfAssignment) {
         assert.equal(validatorInfo.inQueue, false, 'Incorrect validator status');
         assert.equal(validatorInfo.inPrestake, true, 'Incorrect validator status');
         assertBN.equal(assignedValueDelta, '31'.ether, 'Incorrect assigned value');
@@ -236,15 +254,21 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
         // If validator is assigned immediately, then there should be no change in queued capital balances
         assertBN.equal(nodeQueuedBondDelta, 0n);
         assertBN.equal(userQueuedCapitalDelta, 0n);
-    }
-    else
-    {
+    } else {
         assert.equal(validatorInfo.inQueue, true, 'Incorrect validator status');
         assert.equal(validatorInfo.inPrestake, false, 'Incorrect validator status');
-        assertBN.equal(assignedValueDelta, 0n, 'Incorrect assigned value');
-        assertBN.equal(nodeBalanceDelta, expectedNodeBalanceChange, 'Incorrect node balance value');
-        assertBN.equal(userQueuedCapitalDelta, launchValue - bondAmount);
-        assertBN.equal(nodeQueuedBondDelta, bondAmount);
+
+        if (expectMegapoolAssignment) {
+            assertBN.equal(assignedValueDelta, '31'.ether, 'Incorrect assigned value');
+            assertBN.equal(nodeBalanceDelta, 0n, 'Incorrect node balance value');
+            assertBN.equal(userQueuedCapitalDelta, 0n);
+            assertBN.equal(nodeQueuedBondDelta, 0n);
+        } else {
+            assertBN.equal(assignedValueDelta, 0n, 'Incorrect assigned value');
+            assertBN.equal(nodeBalanceDelta, expectedNodeBalanceChange, 'Incorrect node balance value');
+            assertBN.equal(userQueuedCapitalDelta, launchValue - bondAmount);
+            assertBN.equal(nodeQueuedBondDelta, bondAmount);
+        }
     }
 
     assertBN.equal(validatorInfo.lastRequestedValue, '32'.ether / milliToWei, 'Incorrect validator lastRequestedValue');
@@ -466,6 +490,23 @@ export async function getMegapoolForNode(node) {
     const combinedAbi = [...delegateAbi, ...proxyAbi].filter(fragment => fragment.type !== 'constructor');
 
     return new ethers.Contract(megapoolAddress, combinedAbi, node);
+}
+
+export async function getMegapoolForNodeAddress(nodeAddress) {
+    const rocketMegapoolFactory = await RocketMegapoolFactory.deployed();
+    const megapoolAddress = await rocketMegapoolFactory.getExpectedAddress(nodeAddress);
+
+    if (!await rocketMegapoolFactory.getMegapoolDeployed(nodeAddress)) {
+        return null
+    }
+
+    const delegateAbi = artifacts.require('RocketMegapoolDelegate').abi;
+    const proxyAbi = artifacts.require('RocketMegapoolProxy').abi;
+
+    const combinedAbi = [...delegateAbi, ...proxyAbi].filter(fragment => fragment.type !== 'constructor');
+
+    const [signer] = await ethers.getSigners();
+    return new ethers.Contract(megapoolAddress, combinedAbi, signer);
 }
 
 export async function findInQueue(megapoolAddress, validatorId, queueKey, indexOffset = 0n, positionOffset = 0n) {

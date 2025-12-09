@@ -1,6 +1,8 @@
 const { RocketNodeManager, RocketMinipoolManager, RocketMinipoolDelegate } = require('../../test/_utils/artifacts');
 const { assertBN } = require('./bn');
 const assert = require('assert');
+const { getMegapoolForNodeAddress } = require('./megapool');
+const { RocketNodeStaking, RocketDepositPool } = require('../_utils/artifacts');
 
 async function checkInvariants() {
     const nodeAddresses = await getNodeAddresses();
@@ -9,6 +11,40 @@ async function checkInvariants() {
         const minipools = await getMinipoolsByNode(nodeAddress);
         await checkNodeInvariants(nodeAddress, minipools);
     }
+
+    await checkMegapoolInvariants()
+}
+
+async function checkMegapoolInvariants() {
+    // Check deposit.pool.node.balance invariant
+    const nodeAddresses = await getNodeAddresses();
+
+    let totalNodeQueuedBond = 0n
+    for (const nodeAddress of nodeAddresses) {
+        const megapool = await getMegapoolForNodeAddress(nodeAddress);
+
+        // Sum queued bond
+        if (megapool) {
+            const nodeQueuedBond = await megapool.getNodeQueuedBond();
+            totalNodeQueuedBond += nodeQueuedBond;
+        }
+
+        // Check ETH matched and ETH provided match megapool values
+        if (megapool) {
+            const rocketNodeStaking = await RocketNodeStaking.deployed();
+            const ethBorrowed = await rocketNodeStaking.getNodeMegapoolETHBorrowed(nodeAddress);
+            const ethBonded = await rocketNodeStaking.getNodeMegapoolETHBonded(nodeAddress);
+            const nodeBond = (await megapool.getNodeBond()) + (await megapool.getNodeQueuedBond());
+            const userCapital = (await megapool.getUserCapital()) + (await megapool.getUserQueuedCapital());
+            assertBN.equal(ethBorrowed, userCapital, 'ETH borrowed did not match user capital');
+            assertBN.equal(ethBonded, nodeBond, 'ETH bonded did not match node bond');
+        }
+    }
+
+    // Check sum of queued bond equals the node balance
+    const rocketDepositPool = await RocketDepositPool.deployed()
+    const nodeBalance = await rocketDepositPool.getNodeBalance();
+    assertBN.equal(nodeBalance, totalNodeQueuedBond, "Node balance does not match")
 }
 
 async function getNodeAddresses() {
@@ -32,7 +68,7 @@ async function getMinipoolDetails(address) {
         finalised,
         nodeFee,
         userDepositBalance,
-        nodeDepositBalance
+        nodeDepositBalance,
     };
 }
 
@@ -97,4 +133,4 @@ function weightedAverage(nums, weights) {
     return sum / weightSum;
 }
 
-module.exports = { checkInvariants };
+module.exports = { checkInvariants, checkMegapoolInvariants };

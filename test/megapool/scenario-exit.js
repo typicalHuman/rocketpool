@@ -9,6 +9,7 @@ import { assertBN } from '../_helpers/bn';
 import { getValidatorInfo } from '../_helpers/megapool';
 import assert from 'assert';
 import { getSlotForBlock, slotsPerEpoch } from '../_helpers/beaconchain';
+import { checkMegapoolInvariants } from '../_helpers/invariants';
 
 const hre = require('hardhat');
 const ethers = hre.ethers;
@@ -176,9 +177,12 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
         bondRequirement = await rocketNodeDeposit.getBondRequirement(data2.activeValidatorCount);
     }
 
-    let expectedNodeBondDelta = -(data1.nodeBond - bondRequirement);
+    let expectedNodeBondDelta = -(data1.nodeBond + data1.nodeQueuedBond - bondRequirement);
     if (expectedNodeBondDelta < -'32'.ether) {
         expectedNodeBondDelta = -'32'.ether;
+    }
+    if (expectedNodeBondDelta < -data1.nodeBond) {
+        expectedNodeBondDelta = -data1.nodeBond;
     }
 
     const deltas = {
@@ -229,4 +233,6 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
     if (!info.dissolved) {
         assertBN.equal(deltas.activeValidatorCount, -1n);
     }
+
+    await checkMegapoolInvariants()
 }

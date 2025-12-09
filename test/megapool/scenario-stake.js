@@ -1,8 +1,8 @@
-import { getDepositDataRoot } from '../_utils/beacon';
-import { getMegapoolWithdrawalCredentials, getValidatorInfo } from '../_helpers/megapool';
+import { getValidatorInfo } from '../_helpers/megapool';
 import assert from 'assert';
 import { assertBN } from '../_helpers/bn';
-import { RocketMegapoolManager, RocketNodeStaking } from '../_utils/artifacts';
+import { RocketMegapoolManager } from '../_utils/artifacts';
+import { checkMegapoolInvariants } from '../_helpers/invariants';
 
 const milliToWei = 1000000000000000n;
 const prestakeBalance = 1000000000n;
@@ -10,8 +10,8 @@ const prestakeBalance = 1000000000n;
 const hre = require('hardhat');
 const ethers = hre.ethers;
 
-let validatorIndex = 0
-const prestakeAmount = '1'.ether
+let validatorIndex = 0;
+const prestakeAmount = '1'.ether;
 const farFutureEpoch = '18446744073709551615'.BN;
 
 // Stake a megapool validator
@@ -38,7 +38,7 @@ export async function stakeMegapoolValidator(megapool, index) {
 
     // Construct a fake proof
     const proof = {
-        validatorIndex: validatorIndex ++,
+        validatorIndex: validatorIndex++,
         validator: {
             pubkey: validatorInfo.pubkey,
             withdrawalCredentials: withdrawalCredentials,
@@ -55,7 +55,7 @@ export async function stakeMegapoolValidator(megapool, index) {
     const slotProof = {
         slot: 0n,
         witnesses: [],
-    }
+    };
 
     const infoBefore = await getValidatorInfo(megapool, index);
     const lastAssignedValue = infoBefore.lastRequestedValue * milliToWei;
@@ -79,13 +79,13 @@ export async function stakeMegapoolValidator(megapool, index) {
     assert.equal(info.dissolved, false);
 
     const deltas = {
-        nodeBond:data2.nodeBond - data1.nodeBond,
+        nodeBond: data2.nodeBond - data1.nodeBond,
         userCapital: data2.userCapital - data1.userCapital,
         nodeQueuedBond: data2.nodeQueuedBond - data1.nodeQueuedBond,
         userQueuedCapital: data2.userQueuedCapital - data1.userQueuedCapital,
         validatorCount: data2.validatorCount - data1.validatorCount,
         assignedValue: data2.assignedValue - data1.assignedValue,
-    }
+    };
 
     assertBN.equal(deltas.nodeBond, 0n);
     assertBN.equal(deltas.userCapital, 0n);
@@ -94,4 +94,6 @@ export async function stakeMegapoolValidator(megapool, index) {
     assertBN.equal(deltas.assignedValue, -(lastAssignedValue - prestakeAmount));
     assertBN.equal(deltas.validatorCount, 0n);
     assertBN.notEqual(lastDistributionTime, 0n);
+
+    await checkMegapoolInvariants();
 }

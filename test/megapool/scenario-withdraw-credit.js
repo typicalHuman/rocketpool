@@ -5,6 +5,7 @@ import {
     RocketTokenRETH,
 } from '../_utils/artifacts';
 import { assertBN } from '../_helpers/bn';
+import { checkMegapoolInvariants } from '../_helpers/invariants';
 
 export async function withdrawCredit(node, amount, from = node) {
     const rocketDepositPool = await RocketDepositPool.deployed();
@@ -53,4 +54,6 @@ export async function withdrawCredit(node, amount, from = node) {
     assertBN.equal(rethBalanceDelta, rethValue);
     assertBN.equal(creditBalanceDelta, -amount);
     assertBN.equal(userBalanceDelta, 0n);
+
+    await checkMegapoolInvariants()
 }
