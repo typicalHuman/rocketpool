@@ -5,13 +5,15 @@ import {
     setDAOProtocolBootstrapEnableGovernance,
     setDaoProtocolBootstrapModeDisabled,
     setDAOProtocolBootstrapSecurityInvite,
-    setDAOProtocolBootstrapSetting, setDAOProtocolBootstrapSettingAddressList,
+    setDAOProtocolBootstrapSetting,
+    setDAOProtocolBootstrapSettingAddressList,
     setDAOProtocolBootstrapSettingMulti,
 } from './scenario-dao-protocol-bootstrap';
 import {
     RocketDAOProtocolSettingsAuction,
     RocketDAOProtocolSettingsDeposit,
     RocketDAOProtocolSettingsInflation,
+    RocketDAOProtocolSettingsMegapool,
     RocketDAOProtocolSettingsMinipool,
     RocketDAOProtocolSettingsNetwork,
     RocketDAOProtocolSettingsProposals,
@@ -40,14 +42,7 @@ import {
     setDaoProtocolNodeShareSecurityCouncilAdder,
     setDaoProtocolVoterShare,
 } from './scenario-dao-protocol';
-import {
-    getNodeCount,
-    nodeSetDelegate,
-    nodeStakeRPL,
-    registerNode,
-    setRPLLockingAllowed,
-} from '../_helpers/node';
-import { getMinipoolMinimumRPLStake } from '../_helpers/minipool';
+import { getNodeCount, nodeSetDelegate, nodeStakeRPL, registerNode, setRPLLockingAllowed } from '../_helpers/node';
 import { mintRPL } from '../_helpers/tokens';
 import { userDeposit } from '../_helpers/deposit';
 import {
@@ -199,6 +194,29 @@ export default function() {
             });
         });
 
+        it(printTitle('guardian', 'cannot update "user.distribute.delay.shortfall" lower than "user.distribute.delay"'), async () => {
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay.shortfall', 10000, {
+                from: owner,
+            })
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay', 8000, {
+                from: owner,
+            });
+            // Cannot set delay with shortfall lower
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay.shortfall', 7000, {
+                    from: owner,
+                }),
+                'Was able to set delay with shortfall lower than regular delay',
+                'Value must be >= user.distribute.delay');
+            // Cannot set regular delay higher
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay', 11000, {
+                    from: owner,
+                }),
+                'Was able to set delay higher than delay with shortfall',
+                'Value must be <= user.distribute.delay.shortfall');
+        });
+
         // Verify each setting contract is enabled correctly. These settings are tested in greater detail in the relevent contracts
         it(printTitle('guardian', 'updates multiple settings at once while bootstrap mode is enabled'), async () => {
             // Set via bootstrapping
@@ -302,7 +320,7 @@ export default function() {
             const deposits = Array(validatorCount).fill({
                 bondAmount: '4'.ether,
                 useExpressTicket: false,
-            })
+            });
             await nodeDepositMulti(node, deposits);
             // Allow RPL locking by default
             await setRPLLockingAllowed(node, true, { from: node });
@@ -779,7 +797,7 @@ export default function() {
                     await shouldRevert(
                         nodeSetDelegate(nodes[1].address, { from: nodes[0] }),
                         'Was able to set delegate to same value',
-                        'Delegate already set to value'
+                        'Delegate already set to value',
                     );
                 });
 
@@ -1030,7 +1048,7 @@ export default function() {
                     await shouldRevert(
                         daoProtocolExecute(propId, { from: proposer }),
                         'Was able to kick non-existing member',
-                        'This node is not part of the security council'
+                        'This node is not part of the security council',
                     );
                 });
 
@@ -1587,7 +1605,7 @@ export default function() {
 
         describe('With allow listed controller', () => {
             before(async () => {
-                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, "network.allow.listed.controllers", [allowListed.address], { from: owner })
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
             });
 
             it(printTitle('random', 'fails to update UARS parameters when not on allow list'), async () => {
@@ -1607,14 +1625,14 @@ export default function() {
             });
 
             it(printTitle('allow listed', 'fails to update UARS parameter if removed from allow list'), async () => {
-                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, "network.allow.listed.controllers", [], { from: owner })
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [], { from: owner });
                 await shouldRevert(setDaoProtocolNodeShareSecurityCouncilAdder('0.005'.ether, {
                     from: allowListed,
                 }), 'Was able to update node share security council adder', 'Not on allow list');
             });
 
             it(printTitle('allow listed', 'fails to set node share security council adder higher than max'), async () => {
-                const rocketDAOProtocolSettingsNetwork = await RocketDAOProtocolSettingsNetwork.deployed()
+                const rocketDAOProtocolSettingsNetwork = await RocketDAOProtocolSettingsNetwork.deployed();
                 const maximum = await rocketDAOProtocolSettingsNetwork.getMaxNodeShareSecurityCouncilAdder();
 
                 // Set to max works
@@ -1627,7 +1645,7 @@ export default function() {
             });
 
             it(printTitle('allow listed', 'fails to set voter share + node share > 100%'), async () => {
-                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, "network.allow.listed.controllers", [allowListed.address], { from: owner })
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
 
                 // Set voter and node to 50%
                 await setDaoProtocolNodeCommissionShare('0.5'.ether, { from: allowListed });
@@ -1640,14 +1658,14 @@ export default function() {
             });
 
             it(printTitle('allow listed', 'can update node commission share if on allow list'), async () => {
-                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, "network.allow.listed.controllers", [allowListed.address], { from: owner })
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
                 await setDaoProtocolNodeCommissionShare('0.10'.ether, { from: allowListed });
             });
 
             it(printTitle('allow listed', 'can update voter share if on allow list'), async () => {
-                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, "network.allow.listed.controllers", [allowListed.address], { from: owner })
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
                 await setDaoProtocolVoterShare('0.20'.ether, { from: allowListed });
             });
-        })
+        });
     });
 }
