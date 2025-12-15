@@ -137,7 +137,7 @@ contract RocketMegapoolPenalties is RocketBase, RocketMegapoolPenaltiesInterface
         if (block.timestamp > penaltyMaximumPeriod) {
             earlierTime = block.timestamp - penaltyMaximumPeriod;
         }
-        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, uint32(earlierTime));
+        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, uint64(earlierTime));
         // Get current running total
         (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
         // Prevent the running penalty total from exceeding the maximum amount

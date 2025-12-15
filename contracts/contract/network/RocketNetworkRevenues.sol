@@ -105,7 +105,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
 
     /// @notice Calculates the time-weighted average revenue split values between the supplied timestamp and now
     /// @param _sinceTime The starting block timestamp for the calculation
-    function calculateSplit(uint256 _sinceTime) external override view returns (uint256 nodeShare, uint256 voterShare, uint256 protocolDAOShare, uint256 rethShare) {
+    function calculateSplit(uint64 _sinceTime) external override view returns (uint256 nodeShare, uint256 voterShare, uint256 protocolDAOShare, uint256 rethShare) {
         RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
         if (_sinceTime == block.timestamp) {
             nodeShare = _getCurrentShare(rocketNetworkSnapshotsTime, nodeShareKey, true);
@@ -150,7 +150,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
     /// @notice Returns the average capital ratio of the given node operator since a given block
     /// @param _nodeAddress Address of the node operator to query the value for
     /// @param _sinceTime The timestamp to calculate the average since
-    function getNodeAverageCapitalRatioSince(address _nodeAddress, uint256 _sinceTime) external override view returns (uint256) {
+    function getNodeAverageCapitalRatioSince(address _nodeAddress, uint64 _sinceTime) external override view returns (uint256) {
         RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
         bytes32 key = keccak256(abi.encodePacked("node.capital.ratio", _nodeAddress));
         if (_sinceTime == block.timestamp) {
@@ -162,7 +162,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
     }
 
     /// @notice Calculates the time-weighted average since a given block
-    function _getAverageSince(RocketNetworkSnapshotsTimeInterface _rocketNetworkSnapshotsTime, uint256 _sinceTime, bytes32 _key, bool _mustExist) internal view returns (uint256) {
+    function _getAverageSince(RocketNetworkSnapshotsTimeInterface _rocketNetworkSnapshotsTime, uint64 _sinceTime, bytes32 _key, bool _mustExist) internal view returns (uint256) {
         (bool checkpointExists, uint64 checkpointTime, uint192 checkpointValue) = _rocketNetworkSnapshotsTime.latest(_key);
         require(!_mustExist || checkpointExists, "Snapshot does not exist");
         if (!checkpointExists) return 0;
@@ -178,6 +178,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
         uint256 currentAccum = uint256(checkpointValue) + (valueAtTime * durationSinceCheckpoint);
         // Calculate the accumulator at _sinceTime
         (checkpointExists, checkpointTime, checkpointValue) = _rocketNetworkSnapshotsTime.lookupCheckpoint(_key, uint64(_sinceTime));
+        require(!_mustExist || checkpointExists, "Snapshot does not exist");
         valueKey = bytes32(uint256(_key) + checkpointTime);
         valueAtTime = getUint(valueKey);
         durationSinceCheckpoint = (_sinceTime - checkpointTime);

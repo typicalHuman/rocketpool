@@ -507,8 +507,9 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         if (lastDistributionTime == 0) return (_amount, 0, 0, 0);
         // Calculate split based on capital ratio and average commission since last distribute
         RocketNetworkRevenuesInterface rocketNetworkRevenues = RocketNetworkRevenuesInterface(getContractAddress("rocketNetworkRevenues"));
-        (, uint256 voterShare, uint256 protocolDAOShare, uint256 rethShare) = rocketNetworkRevenues.calculateSplit(lastDistributionTime);
-        uint256 averageCapitalRatio = rocketNetworkRevenues.getNodeAverageCapitalRatioSince(nodeAddress, lastDistributionTime);
+        uint64 lastDistributionTime64 = uint64(lastDistributionTime);
+        (, uint256 voterShare, uint256 protocolDAOShare, uint256 rethShare) = rocketNetworkRevenues.calculateSplit(lastDistributionTime64);
+        uint256 averageCapitalRatio = rocketNetworkRevenues.getNodeAverageCapitalRatioSince(nodeAddress, lastDistributionTime64);
         // Sanity check input values
         require(averageCapitalRatio >= calcBase, "Invalid average capital ratio");
         require(voterShare + protocolDAOShare + rethShare <= calcBase, "Invalid shares");
