@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.30;
 
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
+
 import {RocketBase} from "../RocketBase.sol";
 import {RocketNetworkRevenuesInterface} from "../../interface/network/RocketNetworkRevenuesInterface.sol";
 import {RocketNetworkSnapshotsTimeInterface} from "../../interface/network/RocketNetworkSnapshotsTimeInterface.sol";
@@ -177,7 +179,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
         uint256 durationSinceCheckpoint = (block.timestamp - checkpointTime);
         uint256 currentAccum = uint256(checkpointValue) + (valueAtTime * durationSinceCheckpoint);
         // Calculate the accumulator at _sinceTime
-        (checkpointExists, checkpointTime, checkpointValue) = _rocketNetworkSnapshotsTime.lookupCheckpoint(_key, uint64(_sinceTime));
+        (checkpointExists, checkpointTime, checkpointValue) = _rocketNetworkSnapshotsTime.lookupCheckpoint(_key, SafeCast.toUint64(_sinceTime));
         require(!_mustExist || checkpointExists, "Snapshot does not exist");
         valueKey = bytes32(uint256(_key) + checkpointTime);
         valueAtTime = getUint(valueKey);
@@ -191,7 +193,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
 
     /// @dev Calculates the cumulative value of the accumulator at a given timestamp
     function _getAccumulatorAt(RocketNetworkSnapshotsTimeInterface _rocketNetworkSnapshotsTime, bytes32 _key, uint256 _time, bool _mustExist) internal view returns (uint256) {
-        (bool checkpointExists, uint64 checkpointTime, uint192 checkpointValue) = _rocketNetworkSnapshotsTime.lookupCheckpoint(_key, uint64(_time));
+        (bool checkpointExists, uint64 checkpointTime, uint192 checkpointValue) = _rocketNetworkSnapshotsTime.lookupCheckpoint(_key, SafeCast.toUint64(_time));
         require(!_mustExist || checkpointExists, "Snapshot does not exist");
         if (!checkpointExists) return 0;
         bytes32 valueKey = bytes32(uint256(_key) + checkpointTime);
@@ -215,7 +217,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
     function _setShare(bytes32 _key, uint256 _newShare) internal {
         RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
         uint256 currentAccum = _getAccumulatorAt(rocketNetworkSnapshotsTime, _key, block.timestamp, false);
-        rocketNetworkSnapshotsTime.push(_key, uint192(currentAccum));
+        rocketNetworkSnapshotsTime.push(_key, SafeCast.toUint192(currentAccum));
         uint256 newShareScaled = _newShare / shareScale;
         bytes32 valueKey = bytes32(uint256(_key) + block.timestamp);
         setUint(valueKey, newShareScaled);

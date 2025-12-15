@@ -3,6 +3,8 @@
 // Adapted from OpenZeppelin `Checkpoints` contract
 pragma solidity 0.8.30;
 
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
+
 import {RocketStorageInterface} from "../../interface/RocketStorageInterface.sol";
 import {RocketNetworkSnapshotsTimeInterface} from "../../interface/network/RocketNetworkSnapshotsTimeInterface.sol";
 import {RocketBase} from "../RocketBase.sol";
@@ -100,7 +102,7 @@ contract RocketNetworkSnapshotsTime is RocketBase, RocketNetworkSnapshotsTimeInt
 
     /// @dev Inserts a value into a snapshot set
     function _insert(bytes32 _key, uint192 _value) internal {
-        uint64 blockTimestamp = uint64(block.timestamp);
+        uint64 blockTimestamp = SafeCast.toUint64(block.timestamp);
         uint256 pos = length(_key);
 
         if (pos > 0) {

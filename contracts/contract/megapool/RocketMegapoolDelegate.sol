@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.30;
 
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
+
 import {RocketStorageInterface} from "../../interface/RocketStorageInterface.sol";
 import {DepositInterface} from "../../interface/casper/DepositInterface.sol";
 import {RocketDAOProtocolSettingsMegapoolInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMegapoolInterface.sol";
@@ -194,15 +196,15 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         require(debt == 0, "Cannot create validator while debt exists");
         // Setup new validator
         RocketDepositPoolInterface rocketDepositPool = _getRocketDepositPool();
-        uint32 validatorId = uint32(numValidators);
+        uint32 validatorId = numValidators;
         unchecked { // Infeasible overflow
             numValidators += 1;
         }
         {
             ValidatorInfo memory validator;
             validator.inQueue = true;
-            validator.lastRequestedBond = uint32(_bondAmount / milliToWei);
-            validator.lastRequestedValue = uint32(fullDepositValue / milliToWei);
+            validator.lastRequestedBond = SafeCast.toUint32(_bondAmount / milliToWei);
+            validator.lastRequestedValue = SafeCast.toUint32(fullDepositValue / milliToWei);
             validator.expressUsed = _useExpressTicket;
             validators[validatorId] = validator;
         }
@@ -211,7 +213,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         pubkeys[validatorId] = _validatorPubkey;
         // Compute and verify supplied deposit data root is correct
         // Note: We check this here to ensure the deposit contract will not revert when executing prestake
-        bytes32 depositDataRoot = _computeDepositDataRoot(_validatorPubkey, _validatorSignature, uint64(prestakeValue / 1 gwei));
+        bytes32 depositDataRoot = _computeDepositDataRoot(_validatorPubkey, _validatorSignature, SafeCast.toUint64(prestakeValue / 1 gwei));
         require(depositDataRoot == _depositDataRoot, "Invalid deposit data root");
         // Increase queued capital balances
         userQueuedCapital += fullDepositValue - _bondAmount;
@@ -296,15 +298,15 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         // Update validator status
         validator.inQueue = false;
         validator.inPrestake = true;
-        validator.lastAssignmentTime = uint32(block.timestamp);
+        validator.lastAssignmentTime = SafeCast.toUint32(block.timestamp);
         // Record value assigned from deposit pool (subtract prestakeValue as it is going to deposit contract now)
-        validator.depositValue += uint32(prestakeValue / milliToWei);
+        validator.depositValue += SafeCast.toUint32(prestakeValue / milliToWei);
         assignedValue += msg.value - prestakeValue;
         validators[_validatorId] = validator;
         // Execute prestake operation
         bytes memory signature = prestakeSignatures[_validatorId];
         bytes memory pubkey = pubkeys[_validatorId];
-        bytes32 depositDataRoot = _computeDepositDataRoot(pubkey, signature, uint64(prestakeValue / 1 gwei));
+        bytes32 depositDataRoot = _computeDepositDataRoot(pubkey, signature, SafeCast.toUint64(prestakeValue / 1 gwei));
         casperDeposit.deposit{value: prestakeValue}(pubkey, abi.encodePacked(getWithdrawalCredentials()), signature, depositDataRoot);
         // Remove value from queued balances and add to staking values
         uint256 assignedUserCapital = (validator.lastRequestedValue - validator.lastRequestedBond) * milliToWei;
@@ -339,13 +341,13 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         validator.lastAssignmentTime = 0;
         validator.lastRequestedBond = 0;
         validator.lastRequestedValue = 0;
-        validator.depositValue += uint32(lastRequestedValue - prestakeValue / milliToWei);
+        validator.depositValue += SafeCast.toUint32(lastRequestedValue - prestakeValue / milliToWei);
         validators[_validatorId] = validator;
         // Perform remaining 31 ETH stake onto beaconchain
         // Note: Signature is not verified on subsequent deposits and we know the validator is valid due to state proof
         bytes memory signature = hex"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
         bytes memory pubkey = pubkeys[_validatorId];
-        bytes32 depositDataRoot = _computeDepositDataRoot(pubkey, signature, uint64(assignedUsed / 1 gwei));
+        bytes32 depositDataRoot = _computeDepositDataRoot(pubkey, signature, SafeCast.toUint64(assignedUsed / 1 gwei));
         casperDeposit.deposit{value: assignedUsed}(pubkey, abi.encodePacked(getWithdrawalCredentials()), signature, depositDataRoot);
         // Emit event
         emit MegapoolValidatorStaked(_validatorId, block.timestamp);
@@ -507,7 +509,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         if (lastDistributionTime == 0) return (_amount, 0, 0, 0);
         // Calculate split based on capital ratio and average commission since last distribute
         RocketNetworkRevenuesInterface rocketNetworkRevenues = RocketNetworkRevenuesInterface(getContractAddress("rocketNetworkRevenues"));
-        uint64 lastDistributionTime64 = uint64(lastDistributionTime);
+        uint64 lastDistributionTime64 = SafeCast.toUint64(lastDistributionTime);
         (, uint256 voterShare, uint256 protocolDAOShare, uint256 rethShare) = rocketNetworkRevenues.calculateSplit(lastDistributionTime64);
         uint256 averageCapitalRatio = rocketNetworkRevenues.getNodeAverageCapitalRatioSince(nodeAddress, lastDistributionTime64);
         // Sanity check input values
@@ -538,7 +540,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
             }
         }
         // Update lockedTime to current time
-        validator.lockedTime = uint64(block.timestamp);
+        validator.lockedTime = SafeCast.toUint64(block.timestamp);
         validators[_validatorId] = validator;
         // Emit event
         emit MegapoolValidatorLocked(_validatorId, block.timestamp);
@@ -633,7 +635,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         // Mark as exited
         validator.exited = true;
         validator.exiting = false;
-        validator.exitBalance = uint64(_amountInGwei);
+        validator.exitBalance = _amountInGwei;
         uint256 withdrawalBalance = uint256(_amountInGwei) * 1 gwei;
         validators[_validatorId] = validator;
         // Handle dissolved recovery

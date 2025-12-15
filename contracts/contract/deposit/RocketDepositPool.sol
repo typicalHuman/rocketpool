@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.30;
 
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
+
 import {RocketNetworkBalancesInterface} from "../../interface/network/RocketNetworkBalancesInterface.sol";
 import {AddressQueueStorageInterface} from "../../interface/util/AddressQueueStorageInterface.sol";
 import {LinkedListStorageInterface} from "../../interface/util/LinkedListStorageInterface.sol";
@@ -488,10 +490,10 @@ contract RocketDepositPool is RocketBase, RocketDepositPoolInterface, RocketVaul
         // Enqueue megapool
         bytes32 namespace = getQueueNamespace(_expressQueue);
         LinkedListStorageInterface.DepositQueueValue memory value = LinkedListStorageInterface.DepositQueueValue({
-            receiver: msg.sender,                             // Megapool address
-            validatorId: _validatorId,                        // Incrementing id per validator in a megapool
-            suppliedValue: uint32(_bondAmount / milliToWei),  // NO bond amount
-            requestedValue: uint32(_amount / milliToWei)      // Amount being requested
+            receiver: msg.sender,                                        // Megapool address
+            validatorId: _validatorId,                                   // Incrementing id per validator in a megapool
+            suppliedValue: SafeCast.toUint32(_bondAmount / milliToWei),  // NO bond amount
+            requestedValue: SafeCast.toUint32(_amount / milliToWei)      // Amount being requested
         });
         LinkedListStorageInterface linkedListStorage = LinkedListStorageInterface(getContractAddress("linkedListStorage"));
         linkedListStorage.enqueueItem(namespace, value);

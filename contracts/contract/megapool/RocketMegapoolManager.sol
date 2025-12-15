@@ -44,7 +44,7 @@ contract RocketMegapoolManager is RocketBase, RocketMegapoolManagerInterface {
     function addValidator(address _megapoolAddress, uint32 _validatorId, bytes calldata _pubkey) override external onlyLatestContract("rocketMegapoolManager", address(this)) onlyLatestContract("rocketNodeDeposit", msg.sender) {
         uint256 index = getUint(setCountKey);
         setUint(setCountKey, index + 1);
-        uint256 encoded = (uint256(uint160(_megapoolAddress)) << 96) | uint32(_validatorId);
+        uint256 encoded = (uint256(uint160(_megapoolAddress)) << 96) | _validatorId;
         setUint(keccak256(abi.encodePacked("megapool.validator.set", index)), encoded);
         // Add pubkey => megapool mapping and ensure uniqueness
         bytes32 key = keccak256(abi.encodePacked("validator.megapool", _pubkey));

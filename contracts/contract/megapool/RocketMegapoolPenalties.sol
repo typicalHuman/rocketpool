@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.30;
 
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
+
 import {RocketBase} from "../RocketBase.sol";
 import {RocketDAONodeTrustedInterface} from "../../interface/dao/node/RocketDAONodeTrustedInterface.sol";
 import {RocketDAOProtocolSettingsMegapoolInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMegapoolInterface.sol";
@@ -96,7 +98,7 @@ contract RocketMegapoolPenalties is RocketBase, RocketMegapoolPenaltiesInterface
         if (block.timestamp > penaltyMaximumPeriod) {
             earlierTime = block.timestamp - penaltyMaximumPeriod;
         }
-        uint256 earlierRunningTotal = uint256(rocketNetworkSnapshotsTime.lookup(penaltyKey, uint64(earlierTime)));
+        uint256 earlierRunningTotal = uint256(rocketNetworkSnapshotsTime.lookup(penaltyKey, SafeCast.toUint64(earlierTime)));
         // Get current running total
         (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
         // Cap the penalty at the maximum amount based on past 7 days
@@ -137,7 +139,7 @@ contract RocketMegapoolPenalties is RocketBase, RocketMegapoolPenaltiesInterface
         if (block.timestamp > penaltyMaximumPeriod) {
             earlierTime = block.timestamp - penaltyMaximumPeriod;
         }
-        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, uint64(earlierTime));
+        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, SafeCast.toUint64(earlierTime));
         // Get current running total
         (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
         // Prevent the running penalty total from exceeding the maximum amount
@@ -146,7 +148,7 @@ contract RocketMegapoolPenalties is RocketBase, RocketMegapoolPenaltiesInterface
         uint256 currentMaxPenalty = maxPenalty - currentTotal;
         require(_amount <= currentMaxPenalty, "Max penalty exceeded");
         // Insert new running total
-        rocketNetworkSnapshotsTime.push(penaltyKey, currentRunningTotal + uint192(_amount));
+        rocketNetworkSnapshotsTime.push(penaltyKey, currentRunningTotal + SafeCast.toUint192(_amount));
         // Call megapool to increase debt
         RocketMegapoolDelegateInterface(_megapool).applyPenalty(_amount);
     }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.30;
 
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
+
 import {RocketDAONodeTrustedInterface} from "../../interface/dao/node/RocketDAONodeTrustedInterface.sol";
 import {RocketDAOProtocolSettingsMinipoolInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMinipoolInterface.sol";
 import {RocketDAOProtocolSettingsNetworkInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNetworkInterface.sol";
@@ -91,7 +93,7 @@ contract RocketNetworkPenalties is RocketBase, RocketNetworkPenaltiesInterface {
         if (block.timestamp > penaltyMaximumPeriod) {
             earlierTime = block.timestamp - penaltyMaximumPeriod;
         }
-        uint256 earlierRunningTotal = uint256(rocketNetworkSnapshotsTime.lookup(penaltyKey, uint64(earlierTime)));
+        uint256 earlierRunningTotal = uint256(rocketNetworkSnapshotsTime.lookup(penaltyKey, SafeCast.toUint64(earlierTime)));
         // Get current running total
         (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
         // Cap the penalty at the maximum amount based on past 7 days
@@ -131,7 +133,7 @@ contract RocketNetworkPenalties is RocketBase, RocketNetworkPenaltiesInterface {
         if (block.timestamp > penaltyMaximumPeriod) {
             earlierTime = block.timestamp - penaltyMaximumPeriod;
         }
-        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, uint64(earlierTime));
+        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, SafeCast.toUint64(earlierTime));
         // Get current running total
         (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
         // Prevent the running penalty total from exceeding the maximum amount
