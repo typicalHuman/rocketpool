@@ -67,12 +67,21 @@ export async function dissolveValidator(node, validatorIndex, from = node, proof
     const effectiveNodeBond = nodeBond + nodeQueuedBond;
 
     // Calculate expected change in bond and capital
-    let expectedNodeBondChange = bondRequirement - effectiveNodeBond;
-    if (expectedNodeBondChange < -'32'.ether) {
-        expectedNodeBondChange = -'32'.ether;
-    }
-    if (expectedNodeBondChange < -nodeBond) {
-        expectedNodeBondChange = -nodeBond;
+    let expectedNodeBondChange
+    let expectedDebtChange = dissolvePenalty
+    if (effectiveNodeBond <= bondRequirement) {
+        // When underbonded, the 32 ETH goes directly to user capital
+        expectedNodeBondChange = 0n;
+        // But 1 ETH is lost, so the NO accrues a debt
+        expectedDebtChange += '1'.ether
+    } else {
+        expectedNodeBondChange = bondRequirement - effectiveNodeBond;
+        if (expectedNodeBondChange < -'32'.ether) {
+            expectedNodeBondChange = -'32'.ether;
+        }
+        if (expectedNodeBondChange < -nodeBond) {
+            expectedNodeBondChange = -nodeBond;
+        }
     }
     const expectedUserCapitalChange = -'32'.ether - expectedNodeBondChange;
 
@@ -114,7 +123,7 @@ export async function dissolveValidator(node, validatorIndex, from = node, proof
     assertBN.equal(data2.userCapital + data2.userQueuedCapital, data2.nodeMegapoolEthBorrowed);
     assertBN.equal(data2.nodeBond + data2.nodeQueuedBond, data2.nodeMegapoolEthBonded);
     assertBN.equal(deltas.nodeBond + deltas.userCapital, -'32'.ether);
-    assertBN.equal(deltas.debt, dissolvePenalty);
+    assertBN.equal(deltas.debt, expectedDebtChange);
 
     await checkMegapoolInvariants()
 }

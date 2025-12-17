@@ -927,7 +927,7 @@ export default function() {
         it(printTitle('node', 'has bond reduced during dissolve'), async () => {
             const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.time.before.dissolve', dissolvePeriod, { from: owner });
-            // Deposit 4 ETH
+            // Deposit 40 ETH
             await userDeposit({ from: random, value: '4'.ether * 10n });
             // Make 24 validators
             for (let i = 0n; i < 24n; i++) {
@@ -956,6 +956,118 @@ export default function() {
             assertBN.equal(await megapool.getUserCapital(), ('32'.ether * 4n) - '12'.ether);
             assertBN.equal(await megapool.getUserQueuedCapital(), '0'.ether);
             // Finish up exiting all remaining validators
+            for (let i = 0n; i < 4n; i++) {
+                await stakeMegapoolValidator(megapool, i);
+                await exitValidator(megapool, i, '32'.ether);
+            }
+            assertBN.equal(await megapool.getNodeBond(), '0'.ether);
+            assertBN.equal(await megapool.getUserCapital(), '0'.ether);
+        });
+
+        it(printTitle('node', 'can create a new validator if bond requirement increases'), async () => {
+            const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.time.before.dissolve', dissolvePeriod, { from: owner });
+            // Reduce reduced.bond to 2 ETH
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '2'.ether, { from: owner });
+            // Set penalty to 0.1 ETH
+            const dissolvePenalty = '0.1'.ether
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
+            // Deposit 56 ETH
+            await userDeposit({ from: random, value: '20'.ether });
+            // Make 2 validators with 4 ETH bond
+            for (let i = 0n; i < 2n; i++) {
+                await nodeDeposit(node, '4'.ether);
+            }
+            // Make 2 validators with 2 ETH bond
+            for (let i = 0n; i < 2n; i++) {
+                await nodeDeposit(node, '2'.ether);
+            }
+            // Increase reduced.bond back to 4 ETH
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '4'.ether, { from: owner });
+            // Although bond requirement is now 4 ETH, NO is underbonded due to change in bond
+            await shouldRevert(
+                nodeDeposit(node, '4'.ether),
+                'Was able to deposit with 4 ETH',
+                'Bond requirement not met'
+            );
+            // Bond requirement for 5 validators is now 20 ETH and NO has 12, so 8 ETH is required
+            await nodeDeposit(node, '8'.ether);
+        });
+
+        it(printTitle('node', 'can dissolve and exit validators when underbonded'), async () => {
+            const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.time.before.dissolve', dissolvePeriod, { from: owner });
+            // Reduce reduced.bond to 2 ETH
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '2'.ether, { from: owner });
+            // Set penalty to 0.1 ETH
+            const dissolvePenalty = '0.1'.ether
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
+            // Deposit 56 ETH
+            await userDeposit({ from: random, value: '20'.ether });
+            // Make 2 validators with 4 ETH bond
+            for (let i = 0n; i < 2n; i++) {
+                await nodeDeposit(node, '4'.ether);
+            }
+            // Make 52 validators with 2 ETH bond
+            for (let i = 0n; i < 52n; i++) {
+                await nodeDeposit(node, '2'.ether);
+            }
+            // Node should now have 4 active (4+4+2+2=12ETH) and 50 queued validators
+            assertBN.equal(await megapool.getNodeBond(), '12'.ether);
+            assertBN.equal(await megapool.getUserCapital(), '116'.ether);
+            assertBN.equal(await megapool.getNodeQueuedBond(), '100'.ether);
+            assertBN.equal(await megapool.getUserQueuedCapital(), '1500'.ether);
+            // Increase reduced.bond back to 4 ETH
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '4'.ether, { from: owner });
+            // Deposit enough to assign 15 validator
+            await userDeposit({ from: random, value: '32'.ether * 15n });
+            await helpers.time.increase(dissolvePeriod + 1);
+            /**
+             * The NO now has 19 active validators and 35 queued validators
+             *
+             * Node bond should be 4 ETH for the first 2, and 2 ETH for the remaining 15 = 42 ETH
+             * User capital should be 32 ETH * 19 validators - nodeBond = 566 ETH
+             * Node queued bond should be 2 ETH * 35 = 70 ETH
+             * User queued capital should be 32 ETH * 35 - nodeQueuedBond = 990 ETH
+             */
+            assertBN.equal(await megapool.getNodeBond(), '42'.ether);
+            assertBN.equal(await megapool.getUserCapital(), '566'.ether);
+            assertBN.equal(await megapool.getNodeQueuedBond(), '70'.ether);
+            assertBN.equal(await megapool.getUserQueuedCapital(), '1050'.ether);
+            // Disable assignments to prevent exits from performing assignments
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsDeposit, 'deposit.assign.enabled', false, { from: owner });
+            // Dissolve 10 validators
+            for (let i = 4n; i < 14n; i += 1n) {
+                await dissolveValidator(node, i, random);
+            }
+            /**
+             * The NO now has 4 active validators, 10 dissolved validators and 40 queued validators
+             *
+             * For each of the dissolved validators, the NO was unable to cover the lost 1 ETH so they should have
+             * a debt of 10 ETH + 1 ETH in dissolve penalties = 11 ETH
+             *
+             * Node bond should not have changed = 42 ETH
+             * User capital should have decreased by 32 ETH for each dissolved validator = 566 - (32 * 10) = 246 ETH
+             *
+             * Queued bond/capital should not have changed
+             */
+            assertBN.equal(await megapool.getNodeBond(), '42'.ether);
+            assertBN.equal(await megapool.getUserCapital(), '246'.ether);
+            assertBN.equal(await megapool.getNodeQueuedBond(), '70'.ether);
+            assertBN.equal(await megapool.getUserQueuedCapital(), '1050'.ether);
+            assertBN.equal(await megapool.getDebt(), (dissolvePenalty + '1'.ether) * 10n);
+            // Finish up exiting all remaining validators
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsDeposit, 'deposit.assign.enabled', true, { from: owner });
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsDeposit, 'deposit.pool.maximum', '10000'.ether, { from: owner });
+            // Assign, stake and exit all the queued validators
+            for (let i = 14n; i < 54n; i++) {
+                await userDeposit({ from: random, value: '32'.ether });
+                await helpers.time.increase(dissolvePeriod + 1);
+                await stakeMegapoolValidator(megapool, i);
+                await exitValidator(megapool, i, '32'.ether);
+            }
+            // Stake and exit the first 4 validators
+            await helpers.time.increase(dissolvePeriod + 1);
             for (let i = 0n; i < 4n; i++) {
                 await stakeMegapoolValidator(megapool, i);
                 await exitValidator(megapool, i, '32'.ether);

@@ -376,8 +376,9 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         validator.lastAssignmentTime = 0;
         validators[_validatorId] = validator;
         // Decrease total bond used for bond requirement calculations
-        uint256 recycleValue = uint256(validator.lastRequestedValue) * milliToWei;
-        (uint256 nodeShare, uint256 userShare) = _calculateCapitalDispersal(recycleValue, getActiveValidatorCount() - 1);
+        uint256 capitalValue = uint256(validator.lastRequestedValue) * milliToWei;
+        uint256 recycleValue = capitalValue - prestakeValue;
+        (uint256 nodeShare, uint256 userShare) = _calculateCapitalDispersal(capitalValue, getActiveValidatorCount() - 1);
         nodeBond -= nodeShare;
         userCapital -= userShare;
         unchecked { // Infeasible overflow
@@ -386,13 +387,22 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         // Snapshot capital ratio
         _snapshotCapitalRatio();
         // Recycle ETH
-        assignedValue -= recycleValue - prestakeValue;
+        assignedValue -= recycleValue;
+        // Calculate the values to send to node and user
+        uint256 toUser = userShare;
+        if (recycleValue < toUser) {
+            uint256 shortFall = toUser - recycleValue;
+            toUser -= shortFall;
+            _increaseDebt(shortFall);
+        }
+        uint256 toNode = recycleValue - toUser;
+        // Send funds
         RocketDepositPoolInterface rocketDepositPool = _getRocketDepositPool();
-        if (userShare > 0) {
-            rocketDepositPool.recycleDissolvedDeposit{value: userShare}();
+        if (toUser > 0) {
+            rocketDepositPool.recycleDissolvedDeposit{value: toUser}();
         }
         rocketDepositPool.fundsReturned(nodeAddress, nodeShare, userShare);
-        refundValue += nodeShare - prestakeValue;
+        refundValue += toNode;
         // Emit event
         emit MegapoolValidatorDissolved(_validatorId, block.timestamp);
     }

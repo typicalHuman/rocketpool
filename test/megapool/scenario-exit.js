@@ -88,7 +88,7 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
     const withdrawalAddress = await rocketStorage.getNodeWithdrawalAddress(nodeAddress);
 
     async function getData() {
-        let [pendingRewards, megapoolBalance, nodeBalance, rethBalance, depositPoolBalance, nodeRefund, activeValidatorCount, exitingValidatorCount, nodeBond, userCapital, nodeQueuedBond, userQueuedCapital] = await Promise.all([
+        let [pendingRewards, megapoolBalance, nodeBalance, rethBalance, depositPoolBalance, nodeRefund, activeValidatorCount, exitingValidatorCount, nodeBond, userCapital, nodeQueuedBond, userQueuedCapital, nodeDebt] = await Promise.all([
             megapool.getPendingRewards(),
             ethers.provider.getBalance(megapool.target),
             ethers.provider.getBalance(withdrawalAddress),
@@ -101,6 +101,7 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
             megapool.getUserCapital(),
             megapool.getNodeQueuedBond(),
             megapool.getUserQueuedCapital(),
+            megapool.getDebt(),
         ]);
         return {
             pendingRewards,
@@ -115,6 +116,7 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
             userCapital,
             nodeQueuedBond,
             userQueuedCapital,
+            nodeDebt,
         };
     }
 
@@ -171,19 +173,29 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
     await rocketMegapoolManager.connect(megapool.runner).notifyFinalBalance(megapool.target, validatorId, currentTime, withdrawalProof, validatorProof, slotProof);
     const data2 = await getData();
 
-    // Get new bond requirements
+    // Calculate new bond requirement
     let bondRequirement = 0n;
     if (data2.activeValidatorCount > 0n) {
         bondRequirement = await rocketNodeDeposit.getBondRequirement(data2.activeValidatorCount);
     }
+    const effectiveNodeBond = data1.nodeBond + data1.nodeQueuedBond;
 
-    let expectedNodeBondDelta = -(data1.nodeBond + data1.nodeQueuedBond - bondRequirement);
-    if (expectedNodeBondDelta < -'32'.ether) {
-        expectedNodeBondDelta = -'32'.ether;
+    // Calculate expected change in bond and capital
+    let expectedNodeBondChange
+    let expectedDebtChange = '0'.ether
+    if (effectiveNodeBond <= bondRequirement) {
+        // When underbonded, the 32 ETH goes directly to user capital
+        expectedNodeBondChange = 0n;
+    } else {
+        expectedNodeBondChange = bondRequirement - effectiveNodeBond;
+        if (expectedNodeBondChange < -'32'.ether) {
+            expectedNodeBondChange = -'32'.ether;
+        }
+        if (expectedNodeBondChange < -data1.nodeBond) {
+            expectedNodeBondChange = -data1.nodeBond;
+        }
     }
-    if (expectedNodeBondDelta < -data1.nodeBond) {
-        expectedNodeBondDelta = -data1.nodeBond;
-    }
+    const expectedUserCapitalChange = -'32'.ether - expectedNodeBondChange;
 
     const deltas = {
         pendingRewards: data2.pendingRewards - data1.pendingRewards,
@@ -215,8 +227,8 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
         assertBN.equal(deltas.nodeQueuedBond, 0n);
         assertBN.equal(deltas.userQueuedCapital, 0n);
     } else {
-        assertBN.equal(deltas.nodeBond, expectedNodeBondDelta);
-        assertBN.equal(deltas.userCapital, -'32'.ether - expectedNodeBondDelta);
+        assertBN.equal(deltas.nodeBond, expectedNodeBondChange);
+        assertBN.equal(deltas.userCapital, expectedUserCapitalChange);
         assertBN.equal(deltas.nodeQueuedBond, 0n);
         assertBN.equal(deltas.userQueuedCapital, 0n);
     }
