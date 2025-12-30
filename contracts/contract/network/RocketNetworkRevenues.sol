@@ -128,8 +128,8 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
     /// @param _nodeAddress Address of the node operator
     /// @param _value New capital ratio
     function setNodeCapitalRatio(address _nodeAddress, uint256 _value) external override onlyRegisteredMegapool(msg.sender) onlyLatestContract("rocketNetworkRevenues", address(this)) {
-        // Sanity check that ratio should never be below 1
-        require(_value >= 1 ether, "Invalid capital ratio");
+        // Sanity check that ratio should be between 0 and 1
+        require(_value <= 1 ether, "Invalid capital ratio");
         // Compute the key
         bytes32 key = keccak256(abi.encodePacked("node.capital.ratio", _nodeAddress));
         // Get the existing value

@@ -1329,6 +1329,26 @@ export default function() {
                 await notifyFinalBalanceValidator(megapool, 0, '32'.ether, owner, (currentEpoch + 5) * 32);
             });
 
+            it(printTitle('node', 'can stake after dissolve when dusted'), async () => {
+                // Set penalty to 0.1 ETH
+                const dissolvePenalty = '0.1'.ether
+                await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
+                // Dissolve a validator
+                await nodeDeposit(node);
+                await helpers.time.increase(dissolvePeriod + 1);
+                await dissolveValidator(node, 0n, random);
+                // Pay the penalty debt
+                await repayDebt(megapool, dissolvePenalty);
+                // Dust the megapool
+                await random.sendTransaction({
+                    to: megapool.target,
+                    value: '0.01'.ether,
+                });
+                // Try to staka
+                await nodeDeposit(node);
+                await stakeMegapoolValidator(megapool, 1n);
+            });
+
             it(printTitle('random', 'can dissolve validator immediately with a state proof'), async () => {
                 await nodeDeposit(node);
                 const info = await getValidatorInfo(megapool, 0);
@@ -1671,7 +1691,7 @@ export default function() {
                 const lastDistributionTime = await megapool.getLastDistributionTime();
                 await helpers.time.increaseTo(lastDistributionTime + 99n);
                 // Check ratio
-                assertBN.equal(await rocketNetworkRevenues.getNodeCapitalRatio(node.address), '8'.ether);
+                assertBN.equal(await rocketNetworkRevenues.getNodeCapitalRatio(node.address), '0.125'.ether);
                 // Create 1 more validators with 2 ETH bond
                 await nodeDeposit(node, '2'.ether);
                 await stakeMegapoolValidator(megapool, 2);
@@ -1682,33 +1702,33 @@ export default function() {
                 const pendingRewards = await megapool.getPendingRewards();
                 assertBN.equal(pendingRewards, '1'.ether);
                 // Check ratio
-                assertBN.equal(await rocketNetworkRevenues.getNodeCapitalRatio(node.address), '9.6'.ether);
+                assertBN.equal(await rocketNetworkRevenues.getNodeCapitalRatio(node.address), '0.10416'.ether);
                 /*
                     Check average ratio over past 200 seconds
 
-                    100 seconds of 1/8 ratio
-                    100 seconds of 1/9.6  ratio
+                    100 seconds of 0.125 ratio
+                    100 seconds of 0.10416  ratio
 
-                    ((100 * 8) + (100 * 9.6)) / 200 = 8.8
+                    ((100 * 0.125) + (100 * 0.10416)) / 200 = 0.11458
                  */
-                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, lastDistributionTime), '8.8'.ether);
+                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, lastDistributionTime), '0.11458'.ether);
                 /*
                     Rewards: 1 ETH
-                    Avg. Collat Ratio: 1/8.8
-                    Node Portion: 0.1136 ETH
-                    User Portion: 0.8864 ETH
-                    Commission: 0.8864 * 5% = 0.04432 ETH
-                    Node Share: 0.04432 + 0.1136 = 0.1579 ETH
-                    Voter Share: 0.8864 * 9% = 0.07977 ETH
-                    rETH Share: 1 - 0.1579 - 0.07977 = 0.76233 ETH
+                    Avg. Collat Ratio: 11.458%
+                    Node Portion: 0.1148 ETH
+                    User Portion: 0.88542 ETH
+                    Commission: 0.88542 * 5% = 0.044271 ETH
+                    Node Share: 0.044271 + 0.11459 = 0.158861 ETH
+                    Voter Share: 0.88541 * 9% = 0.0796869 ETH
+                    rETH Share: 1 - 0.158861 - 0.0796869 = 0.7614521 ETH
 
                     Note: calculations on-chain are of 3 fixed point precision
                  */
                 const rewardSplit = await megapool.calculatePendingRewards();
-                assertBN.almostEqual(rewardSplit[0], '0.1579'.ether, '0.0001'.ether); // Node
-                assertBN.almostEqual(rewardSplit[1], '0.07977'.ether, '0.0001'.ether); // Voter
+                assertBN.almostEqual(rewardSplit[0], '0.158861'.ether, '0.0001'.ether); // Node
+                assertBN.almostEqual(rewardSplit[1], '0.0796869'.ether, '0.0001'.ether); // Voter
                 assertBN.equal(rewardSplit[2], '0'.ether);                             // pDAO
-                assertBN.almostEqual(rewardSplit[3], '0.76233'.ether, '0.0001'.ether); // User
+                assertBN.almostEqual(rewardSplit[3], '0.7614521'.ether, '0.0001'.ether); // User
             });
 
             it(printTitle('node', 'can exit all validators then capital ratio is reset when creating a new one'), async () => {
@@ -1723,23 +1743,23 @@ export default function() {
                 await stakeMegapoolValidator(megapool, 0);
                 await stakeMegapoolValidator(megapool, 1);
                 await stakeMegapoolValidator(megapool, 2);
-                // Capital ratio should be 9.6 as last stake forced distribution and 9.6 is the new ratio
-                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), '9.6'.ether);
+                // Capital ratio should be 10.415% (4+4+2 / 32+32+32)
+                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), '0.10416'.ether);
                 // Exit a validator
                 await exitValidator(megapool, 0, '32'.ether);
-                // Capital ratio should be back to 8
-                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), '8'.ether);
+                // Capital ratio should be back to 12.5%
+                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), '0.125'.ether);
                 // Exit remaining 2 validators
                 await exitValidator(megapool, 1, '32'.ether);
                 await exitValidator(megapool, 2, '32'.ether);
-                // Capital ratio should remain at 8
-                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), '8'.ether);
+                // Capital ratio should be 0
+                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), 0n);
                 // Create a new validator
                 await nodeDeposit(node);
                 await stakeMegapoolValidator(megapool, 3);
-                // Capital ratio should remain at 8
+                // Capital ratio should be back to 12.5%
                 const lastDistributionTime = await megapool.getLastDistributionTime();
-                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, lastDistributionTime), '8'.ether);
+                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, lastDistributionTime), '0.125'.ether);
                 // Last distribution time should have been updated to the latest block where stake occurred
                 assertBN.equal(lastDistributionTime, await helpers.time.latest());
             });

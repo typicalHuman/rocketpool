@@ -523,10 +523,10 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         (, uint256 voterShare, uint256 protocolDAOShare, uint256 rethShare) = rocketNetworkRevenues.calculateSplit(lastDistributionTime64);
         uint256 averageCapitalRatio = rocketNetworkRevenues.getNodeAverageCapitalRatioSince(nodeAddress, lastDistributionTime64);
         // Sanity check input values
-        require(averageCapitalRatio >= calcBase, "Invalid average capital ratio");
+        require(averageCapitalRatio <= calcBase, "Invalid average capital ratio");
         require(voterShare + protocolDAOShare + rethShare <= calcBase, "Invalid shares");
         unchecked {
-            uint256 borrowedPortion = _amount - (_amount * calcBase / averageCapitalRatio);
+            uint256 borrowedPortion = _amount - (_amount * averageCapitalRatio / calcBase );
             rethRewards = rethShare * borrowedPortion / calcBase;
             voterRewards = voterShare * borrowedPortion / calcBase;
             protocolDAORewards = protocolDAOShare * borrowedPortion / calcBase;
@@ -780,12 +780,11 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         }
         // Calculate and send capital ratio to RocketNetworkRevenues for snapshotting
         RocketNetworkRevenuesInterface rocketNetworkRevenues = RocketNetworkRevenuesInterface(getContractAddress("rocketNetworkRevenues"));
-        if (nodeBond > 0) {
-            // Stored as a ratio of total capital / node bond for greater precision
-            uint256 capitalRatio = (userCapital + nodeBond) * calcBase / nodeBond;
+        if (nodeBond + userCapital > 0) {
+            // Stored as a ratio of node bond / total capital
+            uint256 capitalRatio = nodeBond * calcBase / (userCapital + nodeBond);
             rocketNetworkRevenues.setNodeCapitalRatio(nodeAddress, capitalRatio);
         }
-        // In the case the NO has exited all their validators (nodeBond == 0), we leave the capital ratio at what it was
     }
 
     /// @dev Mirror deposit contract deposit data root calculation but with in-memory bytes instead of calldata
