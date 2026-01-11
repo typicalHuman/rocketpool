@@ -598,7 +598,6 @@ contract RocketDepositPool is RocketBase, RocketDepositPoolInterface, RocketVaul
         // Account for balance changes
         subUint(creditKey, _amount);
         // Note: The funds are already stored in RocketVault under RocketDepositPool so no ETH transfer is required
-        // Get the node operator's withdrawal address
         RocketNodeManagerInterface rocketNodeManager = RocketNodeManagerInterface(getContractAddress("rocketNodeManager"));
         // Calculate deposit fee
         unchecked { // depositFee < msg.value
