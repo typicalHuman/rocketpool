@@ -37,7 +37,7 @@ import {
     RocketDAONodeTrustedActions, RocketDAONodeTrustedProposals,
     RocketDAONodeTrustedSettingsMembers,
     RocketDAONodeTrustedSettingsProposals,
-    RocketDAONodeTrustedUpgrade, RocketDAOProtocolSettingsSecurity,
+    RocketDAONodeTrustedUpgrade, RocketDAOProtocolSettingsNode, RocketDAOProtocolSettingsSecurity,
     RocketMinipoolManager,
     RocketStorage,
     RocketTokenRPL,
@@ -962,6 +962,17 @@ export default function() {
             await shouldRevert(setDaoNodeTrustedBootstrapUpgrade('upgradeABI', 'rocketNodeManager', RocketMinipoolManager.abi, '0x0000000000000000000000000000000000000000', {
                 from: userOne,
             }), 'Random address upgraded a contract ABI', 'Account is not a temporary guardian');
+        });
+
+        it(printTitle('guardian', 'can not set "reduced.bond" to a value not divisible by milliwei'), async () => {
+            // Can set to 1 ether + 1 milliwei
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 1001000000000000000n, { from: guardian });
+            // Cannot set to 1 ether + 1 milliwei + 1 microwei
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 1001001000000000000n, { from: guardian }),
+                'Was able to set "reduced.bond" to value not divisible by milliwei',
+                'Value must be divisible by milliwei'
+            )
         });
 
         it(printTitle('guardian', 'can add a contract ABI in bootstrap mode'), async () => {

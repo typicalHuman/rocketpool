@@ -8,6 +8,8 @@ import {RocketNetworkSnapshotsInterface} from "../../../../interface/network/Roc
 
 /// @notice Network auction settings
 contract RocketDAOProtocolSettingsNode is RocketDAOProtocolSettings, RocketDAOProtocolSettingsNodeInterface {
+    uint256 constant internal milliToWei = 10 ** 15;
+
     // Construct
     constructor(RocketStorageInterface _rocketStorageAddress) RocketDAOProtocolSettings(_rocketStorageAddress, "node") {
         // Set version
@@ -39,6 +41,7 @@ contract RocketDAOProtocolSettingsNode is RocketDAOProtocolSettings, RocketDAOPr
                 rocketNetworkSnapshots.push(settingKey, uint224(_value));
                 return;
             } else if(settingKey == keccak256(bytes("reduced.bond"))) {
+                require(_value % milliToWei == 0, "Value must be divisible by milliwei");
                 require(_value >= 1 ether && _value <= 4 ether, "Value must be >= 1 ETH & <= 4 ETH");
             } else if(settingKey == keccak256(bytes("node.unstaking.period"))) {
                 require(_value <= 6 weeks, "Value must be <= 6 weeks");
