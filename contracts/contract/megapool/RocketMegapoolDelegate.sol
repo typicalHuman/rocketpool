@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.30;
 
-import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
-
 import {RocketStorageInterface} from "../../interface/RocketStorageInterface.sol";
 import {DepositInterface} from "../../interface/casper/DepositInterface.sol";
 import {RocketDAOProtocolSettingsMegapoolInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMegapoolInterface.sol";
@@ -14,6 +12,7 @@ import {RocketRewardsPoolInterface} from "../../interface/rewards/RocketRewardsP
 import {RocketTokenRETHInterface} from "../../interface/token/RocketTokenRETHInterface.sol";
 import {RocketMegapoolDelegateBase} from "./RocketMegapoolDelegateBase.sol";
 import {RocketMegapoolStorageLayout} from "./RocketMegapoolStorageLayout.sol";
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
 
 /// @notice This contract manages multiple validators belonging to an individual node operator.
 ///         It serves as the withdrawal credentials for all Beacon Chain validators managed by it.
@@ -153,9 +152,9 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
     /// @notice Returns the amount in wei of pending rewards ready to be distributed
     function getPendingRewards() override public view returns (uint256) {
         return
-            address(this).balance
-            - refundValue
-            - assignedValue;
+                address(this).balance
+                - refundValue
+                - assignedValue;
     }
 
     /// @notice Returns the block timestamp of the last distribution performed
@@ -271,7 +270,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         // Check bond requirements
         RocketNodeDepositInterface rocketNodeDeposit = _getRocketNodeDeposit();
         uint256 newBondRequirement = rocketNodeDeposit.getBondRequirement(getActiveValidatorCount());
-        uint256 effectiveBond = nodeBond + nodeQueuedBond;
+        uint256 effectiveBond = nodeBond;
         require(effectiveBond > newBondRequirement, "Bond is at minimum");
         unchecked { // Impossible underflow given effectiveBond > newBondRequirement
             uint256 maxReduce = effectiveBond - newBondRequirement;
@@ -795,53 +794,53 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
             let result
             let temp := mload(0x40)
 
-        // [0x00] = pubkey[0x00:0x20]
-        // [0x20] = pubkey[0x20:0x30] . bytes16(0)
+            // [0x00] = pubkey[0x00:0x20]
+            // [0x20] = pubkey[0x20:0x30] . bytes16(0)
             mstore(0x00, mload(add(pubkey, 0x20)))
             mstore(0x20, and(mload(add(pubkey, 0x40)), 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000))
 
-        // temp[0x00] = sha256([0x00:0x40])
+            // temp[0x00] = sha256([0x00:0x40])
             result := staticcall(gas(), 0x02, 0x00, 0x40, temp, 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // temp[0x20] = withdrawal_credentials
+            // temp[0x20] = withdrawal_credentials
             mstore(add(temp, 0x20), withdrawalCredentials)
 
-        // temp[0x00] = sha256(temp[0x00:0x40])
+            // temp[0x00] = sha256(temp[0x00:0x40])
             result := staticcall(gas(), 0x02, temp, 0x40, temp, 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // temp[0x20] = sha256(signature[0x00:0x40])
+            // temp[0x20] = sha256(signature[0x00:0x40])
             result := staticcall(gas(), 0x02, add(signature, 0x20), 0x40, add(temp, 0x20), 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // [0x00] = signature[0x40]
-        // [0x20] = bytes32(0)
+            // [0x00] = signature[0x40]
+            // [0x20] = bytes32(0)
             mstore(0x00, mload(add(signature, 0x60)))
             mstore(0x20, 0)
 
-        // [0x20] = sha256([0x00:0x40])
+            // [0x20] = sha256([0x00:0x40])
             result := staticcall(gas(), 0x02, 0x00, 0x40, 0x20, 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // [0x00] = temp[0x20]
+            // [0x00] = temp[0x20]
             mstore(0x00, mload(add(temp, 0x20)))
 
-        // [0x20] = sha256([0x00:0x40])
+            // [0x20] = sha256([0x00:0x40])
             result := staticcall(gas(), 0x02, 0x00, 0x40, 0x20, 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // [0x00] = to_little_endian(amount) . bytes24(0)
+            // [0x00] = to_little_endian(amount) . bytes24(0)
             mstore(0x00, 0)
             mstore8(0x00, shr(0x00, amount))
             mstore8(0x01, shr(0x08, amount))
@@ -852,22 +851,22 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
             mstore8(0x06, shr(0x30, amount))
             mstore8(0x07, shr(0x38, amount))
 
-        // [0x20] = sha256([0x00:0x40])
+            // [0x20] = sha256([0x00:0x40])
             result := staticcall(gas(), 0x02, 0x00, 0x40, 0x20, 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // [0x00] = temp[0x00]
+            // [0x00] = temp[0x00]
             mstore(0x00, mload(temp))
 
-        // [0x00] = sha256([0x00:0x40])
+            // [0x00] = sha256([0x00:0x40])
             result := staticcall(gas(), 0x02, 0x00, 0x40, 0x00, 0x20)
             if iszero(result) {
                 revert(0, 0)
             }
 
-        // Return [0x00:0x20]
+            // Return [0x00:0x20]
             ret := mload(0x00)
         }
     }
