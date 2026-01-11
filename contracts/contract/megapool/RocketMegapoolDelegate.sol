@@ -267,6 +267,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         require(_amount > 0, "Invalid amount");
         require(debt == 0, "Cannot reduce bond with debt");
         require(nodeQueuedBond == 0, "Cannot reduce bond with queued validators");
+        require(assignedValue == 0, "Cannot reduce bond with prestaked validators");
         // Check bond requirements
         RocketNodeDepositInterface rocketNodeDeposit = _getRocketNodeDeposit();
         uint256 newBondRequirement = rocketNodeDeposit.getBondRequirement(getActiveValidatorCount());
