@@ -37,7 +37,8 @@ import {
     RocketDAONodeTrustedActions, RocketDAONodeTrustedProposals,
     RocketDAONodeTrustedSettingsMembers,
     RocketDAONodeTrustedSettingsProposals,
-    RocketDAONodeTrustedUpgrade, RocketDAOProtocolSettingsNode, RocketDAOProtocolSettingsSecurity,
+    RocketDAONodeTrustedUpgrade,
+    RocketDAOProtocolSettingsMegapool, RocketDAOProtocolSettingsNode, RocketDAOProtocolSettingsSecurity,
     RocketMinipoolManager,
     RocketStorage,
     RocketTokenRPL,
@@ -972,6 +973,14 @@ export default function() {
                 setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 1001001000000000000n, { from: guardian }),
                 'Was able to set "reduced.bond" to value not divisible by milliwei',
                 'Value must be divisible by milliwei'
+            )
+        });
+
+        it(printTitle('guardian', 'can not set "megapool.dissolve.penalty" to zero'), async () => {
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', 0n, { from: guardian }),
+                'Was able to set "megapool.dissolve.penalty" to zero',
+                'Value must be >= 0.01 ETH'
             )
         });
 
