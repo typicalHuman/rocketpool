@@ -149,7 +149,7 @@ contract RocketNetworkRevenues is RocketBase, RocketNetworkRevenuesInterface {
         return _getCurrentShare(rocketNetworkSnapshotsTime, key, false);
     }
 
-    /// @notice Returns the average capital ratio of the given node operator since a given block
+    /// @notice Returns the average capital ratio of the given node operator since a given timestamp
     /// @param _nodeAddress Address of the node operator to query the value for
     /// @param _sinceTime The timestamp to calculate the average since
     function getNodeAverageCapitalRatioSince(address _nodeAddress, uint64 _sinceTime) external override view returns (uint256) {
