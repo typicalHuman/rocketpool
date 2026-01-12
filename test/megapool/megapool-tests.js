@@ -1347,6 +1347,45 @@ export default function() {
                 // Try to staka
                 await nodeDeposit(node);
                 await stakeMegapoolValidator(megapool, 1n);
+            })
+
+            it(printTitle('node', 'can not exit a dissolve validator with invalid withdrawalCredentials'), async () => {
+                await nodeDeposit(node);
+                await helpers.time.increase(dissolvePeriod + 1);
+                await dissolveValidator(node, 0, random);
+                const currentEpoch = await getCurrentEpoch();
+                const info = await getValidatorInfo(megapool, 0n);
+
+                const invalidValidator = {
+                    pubkey: info.pubkey,
+                    withdrawalCredentials: '0x0100000000000000000000000000000000000000000000000000000000000000',
+                    effectiveBalance: 0n,
+                    slashed: false,
+                    activationEligibilityEpoch: 0n,
+                    activationEpoch: 0n,
+                    exitEpoch: 0n,
+                    withdrawableEpoch: currentEpoch,
+                };
+
+                const currentTime = await getCurrentTime();
+
+                const invalidProof = {
+                    validatorIndex: 0n,
+                    validator: invalidValidator,
+                    witnesses: [],
+                };
+
+                const slotProof = {
+                    slot: 0n,
+                    witnesses: [],
+                };
+
+                const rocketMegapoolManager = await RocketMegapoolManager.deployed();
+                await shouldRevert(
+                    rocketMegapoolManager.notifyExit(megapool.target, 0n, await getCurrentTime(), invalidProof, slotProof),
+                    'Was able to notify exit on dissolved validator',
+                    'Invalid withdrawal credentials',
+                );
             });
 
             it(printTitle('random', 'can dissolve validator immediately with a state proof'), async () => {

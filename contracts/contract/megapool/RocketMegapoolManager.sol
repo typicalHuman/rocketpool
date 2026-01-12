@@ -149,6 +149,9 @@ contract RocketMegapoolManager is RocketBase, RocketMegapoolManagerInterface {
         // Verify matching pubkey
         bytes memory pubkey = _megapool.getValidatorPubkey(_validatorId);
         require(keccak256(_validatorProof.validator.pubkey) == keccak256(pubkey), "Pubkey does not match");
+        // Verify withdrawalCredentials
+        bytes32 withdrawalCredentials = _megapool.getWithdrawalCredentials();
+        require(_validatorProof.validator.withdrawalCredentials == withdrawalCredentials, "Invalid withdrawal credentials");
         // Compute the epoch of the supplied proof
         uint64 recentEpoch = _slotProof.slot / slotsPerEpoch;
         // Notify megapool
