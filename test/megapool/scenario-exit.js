@@ -233,16 +233,16 @@ export async function notifyFinalBalanceValidator(megapool, validatorId, finalBa
         assertBN.equal(deltas.userQueuedCapital, 0n);
     }
 
-    // Pending rewards shouldn't change on capital distribution
-    assertBN.equal(deltas.pendingRewards, 0);
+    if (!info.dissolved){
+        // Pending rewards shouldn't change on capital distribution
+        assertBN.equal(deltas.pendingRewards, 0);
 
-    if (nodeCalling) {
-        assertBN.equal(deltas.depositPoolBalance + deltas.rethBalance + deltas.nodeBalance + deltas.nodeRefund, finalBalance);
-    } else {
-        assertBN.equal(deltas.depositPoolBalance + deltas.rethBalance + deltas.nodeRefund, finalBalance);
-    }
+        if (nodeCalling) {
+            assertBN.equal(deltas.depositPoolBalance + deltas.rethBalance + deltas.nodeBalance + deltas.nodeRefund, finalBalance);
+        } else {
+            assertBN.equal(deltas.depositPoolBalance + deltas.rethBalance + deltas.nodeRefund, finalBalance);
+        }
 
-    if (!info.dissolved) {
         assertBN.equal(deltas.activeValidatorCount, -1n);
     }
 

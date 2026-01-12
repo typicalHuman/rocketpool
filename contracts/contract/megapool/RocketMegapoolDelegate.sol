@@ -648,11 +648,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         validator.exitBalance = _amountInGwei;
         uint256 withdrawalBalance = uint256(_amountInGwei) * 1 gwei;
         validators[_validatorId] = validator;
-        // Handle dissolved recovery
-        if (validator.dissolved) {
-            // Send full withdrawal balance to NO
-            refundValue += withdrawalBalance;
-        } else {
+        if (!validator.dissolved) {
             // Calculate capital distribution amounts
             uint256 depositBalance = uint256(validator.depositValue) * milliToWei;
             (uint256 nodeShare, uint256 userShare) = _calculateCapitalDispersal(depositBalance, getActiveValidatorCount() - 1);
