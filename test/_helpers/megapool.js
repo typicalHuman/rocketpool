@@ -168,9 +168,14 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
     let expectExpressQueueChange = useExpressTicket ? 1n : 0n;
     let expectExpressTicketsChange = useExpressTicket ? -1n : 0n;
     let amountRequired = '32'.ether;
+    const minipoolInQueue = data1.minipoolQueueLength > 0n;
 
     if (assignmentsEnabled) {
-        if (queueLength > 0n) {
+        if (minipoolInQueue) {
+            if (depositPoolCapacity >= amountRequired) {
+                expectedNodeBalanceChange -= '16'.ether - '1'.ether;
+            }
+        } else if (queueLength > 0n) {
             const queueHead = await linkedListStorage.peekItem(nextAssignmentIsExpress ? expressQueueNamespace : standardQueueNamespace);
             if (depositPoolCapacity >= amountRequired) {
                 expectedNodeBalanceChange -= queueHead[2] * milliToWei;
@@ -241,9 +246,8 @@ export async function nodeDeposit(node, bondAmount = '4'.ether, useExpressTicket
     assertBN.equal(numValidatorsDelta, 1n, 'Number of validators did not increase by 1');
     assertBN.equal(numGlobalValidatorsDelta, 1n, 'Number of global validators did not increase by 1');
 
-    const minipoolInQueue = data1.minipoolQueueLength > 0n;
-
-    const expectAssignment = !minipoolInQueue &&
+    const expectAssignment =
+        !minipoolInQueue &&
         assignmentsEnabled &&
         depositPoolCapacity >= amountRequired;
 

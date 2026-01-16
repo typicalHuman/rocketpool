@@ -79,8 +79,9 @@ export class Artifacts {
         RocketStorage.instance = this.artifacts['RocketStorage'].at(rocketStorageAddress);
         // Map between network contract name and actual contract name
         const mapping = {
-           'RocketTokenDummyRPL': 'rocketTokenRPLFixedSupply'
-        }
+            'RocketTokenDummyRPL': 'rocketTokenRPLFixedSupply',
+            'LinkedListStorageHelper': 'linkedListStorage',
+        };
         for (const name in this.artifacts) {
             switch (name) {
                 case 'RocketStorage':

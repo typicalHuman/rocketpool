@@ -23,8 +23,8 @@ contract RocketUpgradeOneDotFour is RocketBase {
     string[17] public abisA;
 
     bool public lockedB = false;
-    address[17] public addressesB;
-    string[17] public abisB;
+    address[18] public addressesB;
+    string[18] public abisB;
 
     // Construct
     constructor(
@@ -49,8 +49,8 @@ contract RocketUpgradeOneDotFour is RocketBase {
 
     // @notice Sets the B addresses and ABIs of the upgrade
     function setB(
-        address[17] memory _addressesB,
-        string[17] memory _abisB
+        address[18] memory _addressesB,
+        string[18] memory _abisB
     ) external {
         require(msg.sender == deployer, "Only deployer can set");
         require(!lockedB, "Already set");
@@ -107,6 +107,7 @@ contract RocketUpgradeOneDotFour is RocketBase {
         _upgradeContract("rocketMinipoolManager",             addressesB[12], abisB[12]);
         _upgradeContract("rocketNetworkVoting",               addressesB[13], abisB[13]);
         _upgradeContract("rocketMerkleDistributorMainnet",    addressesB[14], abisB[14]);
+        _upgradeContract("rocketDAOProtocolSettingsProposals",addressesB[17], abisB[17]);
 
         // Initialise the rewards relay address
         InitialiseInterface(addressesB[14]).initialise();
@@ -168,6 +169,14 @@ contract RocketUpgradeOneDotFour is RocketBase {
             // Set protocol upgrade settings per RPIP-60
             setUint(keccak256(abi.encodePacked(settingNameSpace, "upgrade.delay")), 7 days);
             setUint(keccak256(abi.encodePacked(settingNameSpace, "upgradeveto.quorum")), 0.33 ether);
+        }
+
+        // Proposal settings
+        {
+            bytes32 settingNameSpace = keccak256(abi.encodePacked("dao.protocol.setting.", "proposals"));
+            // Set protocol proposal settings per RPIP-64
+            setUint(keccak256(abi.encodePacked(settingNameSpace, "proposal.quorum")), 0.15 ether);
+            setUint(keccak256(abi.encodePacked(settingNameSpace, "proposal.veto.quorum")), 0.20 ether);
         }
 
         // Initialise UARS system

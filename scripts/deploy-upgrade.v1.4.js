@@ -98,6 +98,7 @@ const networkContracts = {
     rocketMerkleDistributorMainnet: artifacts.require('RocketMerkleDistributorMainnet'),
     rocketMegapoolPenalties: artifacts.require('RocketMegapoolPenalties'),
     rocketNetworkSnapshotsTime: artifacts.require('RocketNetworkSnapshotsTime'),
+    rocketDAOProtocolSettingsProposals: artifacts.require('RocketDAOProtocolSettingsProposals'),
 };
 
 async function deployUpgrade(rocketStorageAddress) {
@@ -230,6 +231,7 @@ async function deployUpgrade(rocketStorageAddress) {
         deployedContracts.rocketMerkleDistributorMainnet.address,
         deployedContracts.rocketMegapoolPenalties.address,
         deployedContracts.rocketNetworkSnapshotsTime.address,
+        deployedContracts.rocketDAOProtocolSettingsProposals.address,
     ];
     const setAbisA = [
         compressABI(networkContracts.rocketMegapoolDelegate.abi),
@@ -268,6 +270,7 @@ async function deployUpgrade(rocketStorageAddress) {
         compressABI(networkContracts.rocketMerkleDistributorMainnet.abi),
         compressABI(networkContracts.rocketMegapoolPenalties.abi),
         compressABI(networkContracts.rocketNetworkSnapshotsTime.abi),
+        compressABI(networkContracts.rocketDAOProtocolSettingsProposals.abi),
     ];
     await upgradeContract.connect(signer).setA(setAddressesA, setAbisA);
     await upgradeContract.connect(signer).setB(setAddressesB, setAbisB);

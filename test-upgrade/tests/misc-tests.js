@@ -8,7 +8,7 @@ import {
     RocketDAOProtocolSettingsMegapool,
     RocketDAOProtocolSettingsMinipool,
     RocketDAOProtocolSettingsNetwork,
-    RocketDAOProtocolSettingsNode, RocketDAOProtocolSettingsSecurity,
+    RocketDAOProtocolSettingsNode, RocketDAOProtocolSettingsProposals, RocketDAOProtocolSettingsSecurity,
     RocketNetworkRevenues,
     RocketStorage,
 } from '../../test/_utils/artifacts';
@@ -65,6 +65,7 @@ export default function() {
             const rocketDAOProtocolSettingsNetwork = await RocketDAOProtocolSettingsNetwork.deployed();
             const rocketDAOProtocolSettingsNode = await RocketDAOProtocolSettingsNode.deployed();
             const rocketDAOProtocolSettingsSecurity = await RocketDAOProtocolSettingsSecurity.deployed();
+            const rocketDAOProtocolSettingsProposals = await RocketDAOProtocolSettingsProposals.deployed();
             const rocketStorage = await RocketStorage.deployed();
             const rocketNetworkRevenues = await RocketNetworkRevenues.deployed();
 
@@ -110,6 +111,10 @@ export default function() {
             assertBN.equal(await rocketDAOProtocolSettingsMegapool.getLateNotifyFine(), '0.05'.ether);
             assertBN.equal(await rocketDAOProtocolSettingsMegapool.getUserDistributeDelay(), 1575n);
             assertBN.equal(await rocketDAOProtocolSettingsMegapool.getUserDistributeDelayWithShortfall(), 6750n);
+
+            // RPIP-64
+            assertBN.equal(await rocketDAOProtocolSettingsProposals.getProposalQuorum(), '0.15'.ether);
+            assertBN.equal(await rocketDAOProtocolSettingsProposals.getProposalVetoQuorum(), '0.20'.ether);
 
             // Check protocol version string is set to 1.4
             assert.equal(await rocketStorage.getString(ethers.solidityPackedKeccak256(['string'], ['protocol.version'])), '1.4');
