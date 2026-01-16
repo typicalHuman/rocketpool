@@ -994,6 +994,44 @@ export default function() {
             await nodeDeposit(node, '8'.ether);
         });
 
+        it(printTitle('node', 'can create a new validator if bond requirement increases and node is underbonded by > 32 ETH'), async () => {
+            const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.time.before.dissolve', dissolvePeriod, { from: owner });
+            // Reduce reduced.bond to 2 ETH
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '2'.ether, { from: owner });
+            // Increase deposit pool capacity
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsDeposit, 'deposit.pool.maximum', '10000'.ether, { from: owner });
+            // Set penalty to 0.1 ETH
+            const dissolvePenalty = '0.1'.ether;
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
+            // Deposit ETH
+            await userDeposit({ from: random, value: '30'.ether * 35n });
+            // Make 32 validators with 2 ETH bond
+            await nodeDeposit(node, '4'.ether);
+            await nodeDeposit(node, '4'.ether);
+            for (let i = 0n; i < 30n; i++) {
+                await nodeDeposit(node, '2'.ether);
+            }
+            // Node should now have 32 active validators with a bond of 4+4+(2*30) = 68ETH
+            assertBN.equal(await megapool.getNodeBond(), '68'.ether);
+            assertBN.equal(await megapool.getUserCapital(), '32'.ether * 32n - '68'.ether);
+            assertBN.equal(await megapool.getNodeQueuedBond(), '0'.ether);
+            assertBN.equal(await megapool.getUserQueuedCapital(), '0'.ether);
+            // Increase reduced.bond back to 4 ETH
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '4'.ether, { from: owner });
+            // Node is now underbonded by 4+4+(4*30)-68 = 60 ETH so next validator must have 32 ETH bond
+            assertBN.equal(await megapool.getNewValidatorBondRequirement(), '32'.ether);
+            await nodeDeposit(node, '32'.ether);
+            // Node now has bond of 68+32 = 100, bond requirement with new validator is is 4+4+(4*32) = 136 ETH, so next validator requires 32 ETH
+            assertBN.equal(await megapool.getNodeBond(), '100'.ether);
+            assertBN.equal(await megapool.getNewValidatorBondRequirement(), '32'.ether);
+            await nodeDeposit(node, '32'.ether);
+            // Node now has bond of 100 + 32 = 132, bond requirement with new validator is 4+4+(4*33) = 140 ETH, so next validator requires 8 ETH
+            assertBN.equal(await megapool.getNodeBond(), '132'.ether);
+            assertBN.equal(await megapool.getNewValidatorBondRequirement(), '8'.ether);
+            await nodeDeposit(node, '8'.ether);
+        });
+
         it(printTitle('node', 'can dissolve and exit validators when underbonded'), async () => {
             const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.time.before.dissolve', dissolvePeriod, { from: owner });
@@ -1074,7 +1112,8 @@ export default function() {
             }
             assertBN.equal(await megapool.getNodeBond(), '0'.ether);
             assertBN.equal(await megapool.getUserCapital(), '0'.ether);
-        });
+        })
+
 
         it(printTitle('node', 'cannot exit queue to underbonded state due to dissolves'), async () => {
             const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days

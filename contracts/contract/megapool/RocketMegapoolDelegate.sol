@@ -173,10 +173,15 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         uint256 newBondRequirement = rocketNodeDeposit.getBondRequirement(getActiveValidatorCount() + 1);
         uint256 effectiveBond = nodeBond + nodeQueuedBond;
         if (newBondRequirement > effectiveBond) {
+            // Clamp new bond requirement between 1 - 32 ETH
             if (newBondRequirement - effectiveBond < prestakeValue) {
                 return prestakeValue;
             } else {
-                return newBondRequirement - effectiveBond;
+                uint256 bondRequirement = newBondRequirement - effectiveBond;
+                if (bondRequirement > fullDepositValue) {
+                    bondRequirement = fullDepositValue;
+                }
+                return bondRequirement;
             }
         } else {
             return prestakeValue;

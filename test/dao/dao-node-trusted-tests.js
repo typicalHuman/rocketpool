@@ -1,4 +1,4 @@
-import { describe, it, before } from 'mocha';
+import { before, describe, it } from 'mocha';
 import { printTitle } from '../_utils/formatting';
 import { shouldRevert } from '../_utils/testing';
 import { compressABI } from '../_utils/contract';
@@ -34,11 +34,14 @@ import {
 import { assertBN } from '../_helpers/bn';
 import {
     RocketDAONodeTrusted,
-    RocketDAONodeTrustedActions, RocketDAONodeTrustedProposals,
+    RocketDAONodeTrustedActions,
+    RocketDAONodeTrustedProposals,
     RocketDAONodeTrustedSettingsMembers,
     RocketDAONodeTrustedSettingsProposals,
     RocketDAONodeTrustedUpgrade,
-    RocketDAOProtocolSettingsMegapool, RocketDAOProtocolSettingsNode, RocketDAOProtocolSettingsSecurity,
+    RocketDAOProtocolSettingsMegapool,
+    RocketDAOProtocolSettingsNode,
+    RocketDAOProtocolSettingsSecurity,
     RocketMinipoolManager,
     RocketStorage,
     RocketTokenRPL,
@@ -853,8 +856,8 @@ export default function() {
             const address = await rocketDAONodeTrustedUpgrade.getUpgradeAddress(1n);
             const expectedType = ethers.solidityPackedKeccak256(['string'], ['upgradeContract']);
             assert.equal(address, rocketMinipoolManagerNew.target);
-            assert.equal(type, expectedType)
-            assert.equal(name, 'rocketNodeManager')
+            assert.equal(type, expectedType);
+            assert.equal(name, 'rocketNodeManager');
             // Upgrade should fail before delay
             await shouldRevert(
                 rocketDAONodeTrustedUpgrade.connect(registeredNodeTrusted1).execute(1n),
@@ -966,22 +969,22 @@ export default function() {
         });
 
         it(printTitle('guardian', 'can not set "reduced.bond" to a value not divisible by milliwei'), async () => {
-            // Can set to 1 ether + 1 milliwei
-            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 1001000000000000000n, { from: guardian });
+            // Can set to 2 ether + 1 milliwei
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 2001000000000000000n, { from: guardian });
             // Cannot set to 1 ether + 1 milliwei + 1 microwei
             await shouldRevert(
                 setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 1001001000000000000n, { from: guardian }),
                 'Was able to set "reduced.bond" to value not divisible by milliwei',
-                'Value must be divisible by milliwei'
-            )
+                'Value must be divisible by milliwei',
+            );
         });
 
         it(printTitle('guardian', 'can not set "megapool.dissolve.penalty" to zero'), async () => {
             await shouldRevert(
                 setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', 0n, { from: guardian }),
                 'Was able to set "megapool.dissolve.penalty" to zero',
-                'Value must be >= 0.01 ETH'
-            )
+                'Value must be >= 0.01 ETH',
+            );
         });
 
         it(printTitle('guardian', 'can add a contract ABI in bootstrap mode'), async () => {
