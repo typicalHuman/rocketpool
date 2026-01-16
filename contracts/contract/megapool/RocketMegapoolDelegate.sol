@@ -320,6 +320,10 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         nodeBond += assignedNodeBond;
         userQueuedCapital -= assignedUserCapital;
         nodeQueuedBond -= assignedNodeBond;
+        // Store capital ratio on first assignment
+        if (lastDistributionTime == 0) {
+            _calculateAndSaveCapitalRatio();
+        }
         // Delete prestake signature for a small gas refund (no longer needed)
         delete prestakeSignatures[_validatorId];
         // Emit event
@@ -335,7 +339,7 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         require(validator.inPrestake, "Validator must be pre-staked");
         // Store last requested value for later
         uint32 lastRequestedValue = validator.lastRequestedValue;
-        // Snapshot capital ratio (sets lastDistributionTime on first validator)
+        // Snapshot capital ratio
         _snapshotCapitalRatio();
         // Account for assigned value
         uint256 assignedUsed = lastRequestedValue * milliToWei - prestakeValue;
@@ -772,13 +776,18 @@ contract RocketMegapoolDelegate is RocketMegapoolDelegateBase, RocketMegapoolDel
         return RocketNodeDepositInterface(rocketStorage.getAddress(rocketNodeDepositKey));
     }
 
-    /// @dev Calculates the current capital ratio of this Megapool and notifies RocketNetworkRevenues to snapshot it
-    ///      Attempts to distribute rewards at current ratio before snapshotting
+    /// @dev Attempts to distribute rewards at current ratio before snapshotting capital ratio
     function _snapshotCapitalRatio() internal {
         // Try to distribute rewards before updating capital ratio
         if (numExitingValidators == 0 && numLockedValidators == 0) {
             _distributeAmount(getPendingRewards());
         }
+        // Snapshot capital ratio
+        _calculateAndSaveCapitalRatio();
+    }
+
+    /// @dev Calculates the current capital ratio of this Megapool and notifies RocketNetworkRevenues to snapshot it
+    function _calculateAndSaveCapitalRatio() internal {
         // Calculate and send capital ratio to RocketNetworkRevenues for snapshotting
         RocketNetworkRevenuesInterface rocketNetworkRevenues = RocketNetworkRevenuesInterface(getContractAddress("rocketNetworkRevenues"));
         if (nodeBond + userCapital > 0) {

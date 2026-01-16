@@ -1276,15 +1276,6 @@ export default function() {
                 await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.time.before.dissolve', dissolvePeriod, { from: owner });
             });
 
-            it(printTitle('node', 'receives any ETH that was already in the megapool prior to first validator stake'), async () => {
-                const preStakeRewards = '0.123'.ether;
-                await nodeDeposit(node);
-                await mockRewards(megapool, preStakeRewards);
-                await stakeMegapoolValidator(megapool, 0);
-                assertBN.equal(await megapool.getRefundValue(), preStakeRewards);
-                assertBN.equal(await megapool.getPendingRewards(), 0n);
-            });
-
             it(printTitle('node', 'can deposit while assignments are disabled and be assigned once enabled again'), async () => {
                 const rocketDepositPool = await RocketDepositPool.deployed();
                 // Disable deposit assignments
@@ -1830,8 +1821,8 @@ export default function() {
                 // Exit remaining 2 validators
                 await exitValidator(megapool, 1, '32'.ether);
                 await exitValidator(megapool, 2, '32'.ether);
-                // Capital ratio should be 0
-                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), 0n);
+                // Capital ratio should remain 12.5%
+                assertBN.equal(await rocketNetworkRevenues.getNodeAverageCapitalRatioSince(node.address, await megapool.getLastDistributionTime()), '0.125'.ether);
                 // Create a new validator
                 await nodeDeposit(node);
                 await stakeMegapoolValidator(megapool, 3);
