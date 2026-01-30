@@ -454,8 +454,8 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface, RocketVaul
         bool provisioned = getBool(keccak256(abi.encodePacked("node.express.provisioned", _nodeAddress)));
         uint256 expressTickets = 0;
         if (!provisioned) {
-            // Nodes prior to Saturn should receive 2 express tickets (initial value of `express_queue_tickets_base_provision`)
-            expressTickets += 2;
+            // Nodes prior to Saturn should receive 0 express tickets (initial value of `express_queue_tickets_base_provision`) (RPIP-75)
+            expressTickets += 0;
             // Each node SHALL be provided additional express_queue_tickets equal to (bonded ETH in legacy minipools)/4
             RocketNodeStakingInterface rocketNodeStaking = RocketNodeStakingInterface(getContractAddress("rocketNodeStaking"));
             uint256 bondedETH = rocketNodeStaking.getNodeETHBonded(_nodeAddress);

@@ -98,8 +98,8 @@ export default function() {
             assertBN.equal(await rocketDAOProtocolSettingsNode.getUnstakingPeriod(), 60 * 60 * 24 * 28);
 
             // RPIP-59 / RPIP-72
-            assertBN.equal(await rocketDAOProtocolSettingsDeposit.getExpressQueueRate(), 2n);
-            assertBN.equal(await rocketDAOProtocolSettingsDeposit.getExpressQueueTicketsBaseProvision(), 2n);
+            assertBN.equal(await rocketDAOProtocolSettingsDeposit.getExpressQueueRate(), 4n);
+            assertBN.equal(await rocketDAOProtocolSettingsDeposit.getExpressQueueTicketsBaseProvision(), 0n);
             assertBN.equal(await rocketDAOProtocolSettingsMegapool.getTimeBeforeDissolve(), 60 * 60 * 24 * 28);
 
             // RPIP-60

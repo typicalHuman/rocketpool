@@ -251,13 +251,13 @@ export default function() {
             it(printTitle('node', 'has expected number of express queue tickets'), async () => {
                 const rocketNodeManager = await RocketNodeManager.deployed();
                 const expressTicketsBefore = await rocketNodeManager.getExpressTicketCount(node.address)
-                // 2 base + 4 for the 16 ETH minipool (16 / 4)
-                assertBN.equal(expressTicketsBefore, 6n);
+                // 0 base + 4 for the 16 ETH minipool (16 / 4)
+                assertBN.equal(expressTicketsBefore, 4n);
                 assert.equal(await rocketNodeManager.getExpressTicketsProvisioned(node.address), false);
                 // Manually provision
                 await rocketNodeManager.connect(node).provisionExpressTickets(node.address);
                 const expressTicketsAfter = await rocketNodeManager.getExpressTicketCount(node.address)
-                assertBN.equal(expressTicketsAfter, 6n);
+                assertBN.equal(expressTicketsAfter, 4n);
                 assert.equal(await rocketNodeManager.getExpressTicketsProvisioned(node.address), true);
             });
 

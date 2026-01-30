@@ -160,6 +160,7 @@ export const RocketMinipoolDelegate = artifacts.require('RocketMinipoolDelegate'
 export const RocketDAOProtocolSettingsMinipool = artifacts.require('RocketDAOProtocolSettingsMinipool');
 export const RocketDAOProtocolSettingsMegapool = artifacts.require('RocketDAOProtocolSettingsMegapool');
 export const LinkedListStorage = artifacts.require('LinkedListStorageHelper');
+export const StorageHelper = artifacts.require('StorageHelper');
 export const RocketDepositPool = artifacts.require('RocketDepositPool');
 export const RocketMinipoolBondReducer = artifacts.require('RocketMinipoolBondReducer');
 export const RocketNetworkSnapshots = artifacts.require('RocketNetworkSnapshots');

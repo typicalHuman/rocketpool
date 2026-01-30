@@ -22,6 +22,11 @@ export async function deployRocketPool() {
         artifact: artifacts.require('LinkedListStorageHelper'),
     };
 
+    deployer.contractPlan['storageHelper'] = {
+        constructorArgs: () => deployer.defaultConstructorArgs(),
+        artifact: artifacts.require('StorageHelper'),
+    };
+
     deployer.contractPlan['megapoolUpgradeHelper'] = {
         constructorArgs: () => deployer.defaultConstructorArgs(),
         artifact: artifacts.require('MegapoolUpgradeHelper'),

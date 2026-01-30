@@ -21,8 +21,8 @@ contract RocketDAOProtocolSettingsDeposit is RocketDAOProtocolSettings, RocketDA
             _setSettingUint("deposit.assign.maximum", 90);
             _setSettingUint("deposit.assign.socialised.maximum", 0);
             _setSettingUint("deposit.fee", 0.0005 ether);                // Set to approx. 1 day of rewards at 18.25% APR
-            _setSettingUint("express.queue.rate", 2);                    // RPIP-59
-            _setSettingUint("express.queue.tickets.base.provision", 2);  // RPIP-59
+            _setSettingUint("express.queue.rate", 4);                    // RPIP-75
+            _setSettingUint("express.queue.tickets.base.provision", 0);  // RPIP-75
             // Set deploy flag
             setBool(keccak256(abi.encodePacked(settingNameSpace, "deployed")), true);
         }

@@ -29,6 +29,7 @@ import {
     RocketStorage,
     RocketTokenRETH,
     RocketVault,
+    StorageHelper,
 } from '../_utils/artifacts';
 import assert from 'assert';
 import { stakeMegapoolValidator } from './scenario-stake';
@@ -70,6 +71,12 @@ async function getValidPrestakeValidator(megapool, index) {
         exitEpoch: farFutureEpoch,
         withdrawableEpoch: farFutureEpoch,
     };
+}
+
+async function mockExpressTickets(nodeAddress, count) {
+    const helper = await StorageHelper.deployed();
+    const key = ethers.solidityPackedKeccak256(['string', 'address'], ['node.express.tickets', nodeAddress]);
+    await helper.setUint(key, count);
 }
 
 export default function() {
@@ -291,6 +298,7 @@ export default function() {
 
         it(printTitle('node', 'can deposit multi with mixed express ticket usage'), async () => {
             await deployMegapool({ from: node });
+            await mockExpressTickets(node.address, 2)
 
             const deposits = [
                 {
@@ -316,6 +324,7 @@ export default function() {
 
         it(printTitle('node', 'can deposit multi with mixed bond amounts'), async () => {
             await deployMegapool({ from: node });
+            await mockExpressTickets(node.address, 2)
 
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '2'.ether, { from: owner });
 
@@ -510,6 +519,8 @@ export default function() {
 
         it(printTitle('misc', 'calculates position in queue correctly'), async () => {
             const rocketDepositPool = await RocketDepositPool.deployed();
+            await mockExpressTickets(node.address, 2)
+            await mockExpressTickets(node2.address, 2)
 
             /**
              * We will add 5 validators to the queue, 2 of which using an express ticket.
@@ -574,17 +585,17 @@ export default function() {
              * Therefore, the queue should now look like:
              *
              * 0: node-2 (express)
-             * 1: node-0
-             * 2: node2-0 (express)
-             * 3: node2-1 (express)
+             * 1: node2-0 (express)
+             * 2: node2-1 (express)
+             * 3: node-0
              * 4: node-3
              * 5: node-4
              */
 
             assertBN.equal(await calculatePositionInQueue(megapool, 2n), 0n);
-            assertBN.equal(await calculatePositionInQueue(megapool, 0n), 1n);
-            assertBN.equal(await calculatePositionInQueue(megapool2, 0n), 2n);
-            assertBN.equal(await calculatePositionInQueue(megapool2, 1n), 3n);
+            assertBN.equal(await calculatePositionInQueue(megapool2, 0n), 1n);
+            assertBN.equal(await calculatePositionInQueue(megapool2, 1n), 2n);
+            assertBN.equal(await calculatePositionInQueue(megapool, 0n), 3n);
             assertBN.equal(await calculatePositionInQueue(megapool, 3n), 4n);
             assertBN.equal(await calculatePositionInQueue(megapool, 4n), 5n);
 
@@ -595,16 +606,16 @@ export default function() {
             /**
              * The queue should now look like:
              *
-             * 0: node-0
-             * 1: node2-0 (express)
-             * 2: node2-1 (express)
+             * 0: node2-0 (express)
+             * 1: node2-1 (express)
+             * 2: node-0
              * 3: node-3
              * 4: node-4
              */
 
-            assertBN.equal(await calculatePositionInQueue(megapool, 0n), 0n);
-            assertBN.equal(await calculatePositionInQueue(megapool2, 0n), 1n);
-            assertBN.equal(await calculatePositionInQueue(megapool2, 1n), 2n);
+            assertBN.equal(await calculatePositionInQueue(megapool2, 0n), 0n);
+            assertBN.equal(await calculatePositionInQueue(megapool2, 1n), 1n);
+            assertBN.equal(await calculatePositionInQueue(megapool, 0n), 2n);
             assertBN.equal(await calculatePositionInQueue(megapool, 3n), 3n);
             assertBN.equal(await calculatePositionInQueue(megapool, 4n), 4n);
         });
@@ -970,7 +981,7 @@ export default function() {
             // Reduce reduced.bond to 2 ETH
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '2'.ether, { from: owner });
             // Set penalty to 0.1 ETH
-            const dissolvePenalty = '0.1'.ether
+            const dissolvePenalty = '0.1'.ether;
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
             // Deposit 56 ETH
             await userDeposit({ from: random, value: '20'.ether });
@@ -988,7 +999,7 @@ export default function() {
             await shouldRevert(
                 nodeDeposit(node, '4'.ether),
                 'Was able to deposit with 4 ETH',
-                'Bond requirement not met'
+                'Bond requirement not met',
             );
             // Bond requirement for 5 validators is now 20 ETH and NO has 12, so 8 ETH is required
             await nodeDeposit(node, '8'.ether);
@@ -1038,7 +1049,7 @@ export default function() {
             // Reduce reduced.bond to 2 ETH
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', '2'.ether, { from: owner });
             // Set penalty to 0.1 ETH
-            const dissolvePenalty = '0.1'.ether
+            const dissolvePenalty = '0.1'.ether;
             await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
             // Deposit 56 ETH
             await userDeposit({ from: random, value: '20'.ether });
@@ -1112,8 +1123,7 @@ export default function() {
             }
             assertBN.equal(await megapool.getNodeBond(), '0'.ether);
             assertBN.equal(await megapool.getUserCapital(), '0'.ether);
-        })
-
+        });
 
         it(printTitle('node', 'cannot exit queue to underbonded state due to dissolves'), async () => {
             const dissolvePeriod = (60 * 60 * 24 * 10); // 10 Days
@@ -1156,12 +1166,12 @@ export default function() {
              * Exiting the queue now would result in NO being underbonded
              */
             {
-                const bondRequirement = await rocketNodeDeposit.getBondRequirement(await megapool.getActiveValidatorCount())
-                const nodeBond = await megapool.getNodeBond()
-                const nodeQueuedBond = await megapool.getNodeQueuedBond()
-                assertBN.equal(bondRequirement, '24'.ether)
-                assertBN.equal(nodeBond, '0'.ether)
-                assertBN.equal(nodeQueuedBond, '24'.ether)
+                const bondRequirement = await rocketNodeDeposit.getBondRequirement(await megapool.getActiveValidatorCount());
+                const nodeBond = await megapool.getNodeBond();
+                const nodeQueuedBond = await megapool.getNodeQueuedBond();
+                assertBN.equal(bondRequirement, '24'.ether);
+                assertBN.equal(nodeBond, '0'.ether);
+                assertBN.equal(nodeQueuedBond, '24'.ether);
             }
             // NO cannot exit queued
             await shouldRevert(exitQueue(node, 18n), 'Was able to exit queue', 'Bond requirement not met');
@@ -1174,12 +1184,12 @@ export default function() {
              * NO should now be able to exit a validator from the queue
              */
             {
-                const bondRequirement = await rocketNodeDeposit.getBondRequirement(await megapool.getActiveValidatorCount())
-                const nodeBond = await megapool.getNodeBond()
-                const nodeQueuedBond = await megapool.getNodeQueuedBond()
-                assertBN.equal(bondRequirement, '22'.ether)
-                assertBN.equal(nodeBond, '0'.ether)
-                assertBN.equal(nodeQueuedBond, '24'.ether)
+                const bondRequirement = await rocketNodeDeposit.getBondRequirement(await megapool.getActiveValidatorCount());
+                const nodeBond = await megapool.getNodeBond();
+                const nodeQueuedBond = await megapool.getNodeQueuedBond();
+                assertBN.equal(bondRequirement, '22'.ether);
+                assertBN.equal(nodeBond, '0'.ether);
+                assertBN.equal(nodeQueuedBond, '24'.ether);
             }
             await exitQueue(node, 18n);
             // Disable assignments to prevent exits from performing assignments
@@ -1194,12 +1204,12 @@ export default function() {
             }
             // Check state
             {
-                const bondRequirement = await rocketNodeDeposit.getBondRequirement(await megapool.getActiveValidatorCount())
-                const nodeBond = await megapool.getNodeBond()
-                const nodeQueuedBond = await megapool.getNodeQueuedBond()
-                assertBN.equal(bondRequirement, '0'.ether)
-                assertBN.equal(nodeBond, '0'.ether)
-                assertBN.equal(nodeQueuedBond, '0'.ether)
+                const bondRequirement = await rocketNodeDeposit.getBondRequirement(await megapool.getActiveValidatorCount());
+                const nodeBond = await megapool.getNodeBond();
+                const nodeQueuedBond = await megapool.getNodeQueuedBond();
+                assertBN.equal(bondRequirement, '0'.ether);
+                assertBN.equal(nodeBond, '0'.ether);
+                assertBN.equal(nodeQueuedBond, '0'.ether);
             }
         });
 
@@ -1315,6 +1325,7 @@ export default function() {
             });
 
             it(printTitle('node', 'can create new validators per bond requirements'), async () => {
+                await mockExpressTickets(node.address, 2)
                 await shouldRevert(nodeDeposit(node, '8'.ether), 'Created validator', 'Bond requirement not met');
                 await shouldRevert(nodeDeposit(node, '2'.ether), 'Created validator', 'Bond requirement not met');
                 await nodeDeposit(node);
@@ -1325,7 +1336,8 @@ export default function() {
                 await shouldRevert(nodeDeposit(node, '2'.ether), 'Created validator', 'Bond requirement not met');
             });
 
-            it(printTitle('node', 'can not consume more than 2 provisioned express tickets'), async () => {
+            it(printTitle('node', 'can not consume more than provisioned express tickets'), async () => {
+                await mockExpressTickets(node.address, 2)
                 await nodeDeposit(node, '4'.ether, true);
                 await nodeDeposit(node, '4'.ether, true);
                 await shouldRevert(nodeDeposit(node, '4'.ether, true), 'Consumed express ticket', 'No express tickets');
@@ -1336,6 +1348,7 @@ export default function() {
             });
 
             it(printTitle('node', 'can create a new validator with an express ticket'), async () => {
+                await mockExpressTickets(node.address, 1)
                 await nodeDeposit(node, '4'.ether, true);
             });
 
@@ -1361,7 +1374,7 @@ export default function() {
 
             it(printTitle('node', 'can stake after dissolve when dusted'), async () => {
                 // Set penalty to 0.1 ETH
-                const dissolvePenalty = '0.1'.ether
+                const dissolvePenalty = '0.1'.ether;
                 await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', dissolvePenalty, { from: owner });
                 // Dissolve a validator
                 await nodeDeposit(node);
@@ -1377,7 +1390,7 @@ export default function() {
                 // Try to staka
                 await nodeDeposit(node);
                 await stakeMegapoolValidator(megapool, 1n);
-            })
+            });
 
             it(printTitle('node', 'can not exit a dissolve validator with invalid withdrawalCredentials'), async () => {
                 await nodeDeposit(node);
