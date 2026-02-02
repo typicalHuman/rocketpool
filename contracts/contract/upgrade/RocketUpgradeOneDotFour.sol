@@ -155,6 +155,10 @@ contract RocketUpgradeOneDotFour is RocketBase {
             setUint(keccak256(abi.encodePacked(settingNameSpace, "node.unstaking.period")), 28 days);                 // 28 days (RPIP-30)
             setUint(keccak256(abi.encodePacked(settingNameSpace, "node.withdrawal.cooldown")), 0);                    // No cooldown (RPIP-30)
             setUint(keccak256(abi.encodePacked(settingNameSpace, "node.minimum.legacy.staked.rpl")), 0.15 ether);     // 15% (RPIP-30)
+
+            // Delete removed parameters
+            deleteUint(keccak256(abi.encodePacked(settingNameSpace, "node.per.minipool.stake.minimum")));
+            deleteUint(keccak256(abi.encodePacked(settingNameSpace, "node.per.minipool.stake.maximum")));
         }
 
         // Minipool settings
