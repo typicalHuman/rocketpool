@@ -10,7 +10,7 @@ import {
     RocketMinipoolPenalty,
     RocketNetworkPenalties,
     RocketNodeDeposit,
-    RocketNodeManager,
+    RocketNodeManager, RocketNodeStaking,
 } from '../../test/_utils/artifacts';
 import { shouldRevert } from '../../test/_utils/testing';
 import { createVacantMinipool, minipoolStates, promoteMinipool, stakeMinipool } from '../../test/_helpers/minipool';
@@ -21,6 +21,8 @@ import { getValidatorPubkey } from '../../test/_utils/beacon';
 import { deployMegapool } from '../../test/_helpers/megapool';
 import { beginUserDistribute, withdrawValidatorBalance } from '../../test/minipool/scenario-withdraw-validator-balance';
 import { setDAOProtocolBootstrapSetting } from '../../test/dao/scenario-dao-protocol-bootstrap';
+import { close } from '../../test/minipool/scenario-close';
+import { unstakeLegacyRpl } from '../../test/node/scenario-unstake-legacy-rpl';
 const { assertBN } = require('../../test/_helpers/bn');
 const { beforeEach, describe, before, it } = require('mocha');
 const { globalSnapShot } = require('../../test/_utils/snapshotting');
@@ -236,7 +238,7 @@ export default function() {
                 await setNodeTrusted(trustedNode3, 'saas_3', 'node@home.com', owner);
                 // Set max penalty rate
                 let rocketMinipoolPenalty = await RocketMinipoolPenalty.deployed();
-                rocketMinipoolPenalty.setMaxPenaltyRate('1'.ether, { from: owner });
+                await rocketMinipoolPenalty.connect(owner).setMaxPenaltyRate('1'.ether);
             })
 
             it(printTitle('node', 'can not bond reduce after upgrade'), async () => {
@@ -263,6 +265,24 @@ export default function() {
 
             it(printTitle('node', 'can exit a staking minipool'), async () => {
                 await withdrawAndCheck(minipool, '36', node, false, '17.8', '18.2');
+            });
+
+            it(printTitle('node', 'can exit a staking minipool and get slashed below minimum RPL requirement'), async () => {
+                const rocketNodeStaking = await RocketNodeStaking.deployed()
+                const stakedRPLBefore = await rocketNodeStaking.getNodeLegacyStakedRPL(node.address)
+                await withdrawAndCheck(minipool, '15', node, false, '15', '0');
+                const stakedRPLAfter = await rocketNodeStaking.getNodeLegacyStakedRPL(node.address)
+                // RPL price is 0.01 ETH so should slash 100 RPL
+                assertBN.equal(stakedRPLBefore - stakedRPLAfter, '100'.ether);
+            });
+
+            it(printTitle('node', 'can be slashed greater than legacy staked RPL balance'), async () => {
+                const rocketNodeStaking = await RocketNodeStaking.deployed()
+                // Return 10 ETH which results int 600 RPL slashing
+                await withdrawAndCheck(minipool, '10', node, false, '10', '0');
+                const stakedRPLAfter = await rocketNodeStaking.getNodeLegacyStakedRPL(node.address)
+                // RPL price is 0.01 ETH so should slash 100 RPL
+                assertBN.equal(stakedRPLAfter, 0n);
             });
 
             it(printTitle('trusted node', 'can submit minipool penalties'), async() => {
@@ -299,6 +319,65 @@ export default function() {
                 }), 'Was able to submit penalty', 'Invalid trusted node');
             })
 
+        })
+
+        describe('With multiple staking legacy minipool', () => {
+            let minipool1,
+                minipool2,
+                minipool3
+
+            beforeEach(async () => {
+                // Register node and create a 16 ETH minipool
+                await registerNode({ from: node });
+                const minipoolRplStake = await getMinipoolMinimumRPLStake();
+                await mintRPL(owner, node, minipoolRplStake * 3n);
+                await stakeRPL(node, minipoolRplStake * 3n);
+                minipool1 = (await createMinipool({ from: node, value: '16'.ether })).connect(node);
+                minipool2 = (await createMinipool({ from: node, value: '16'.ether })).connect(node);
+                minipool3 = (await createMinipool({ from: node, value: '16'.ether })).connect(node);
+                // Execute upgrade
+                await executeUpgrade(owner, upgradeContract, rocketStorageAddress);
+                // Perform 3 user deposit that will assign all 3 minipools
+                await userDeposit({ from: random, value: '32'.ether });
+                await userDeposit({ from: random, value: '32'.ether });
+                await userDeposit({ from: random, value: '32'.ether });
+                // Wait for scrub period
+                await helpers.time.increase(60 * 60 * 12 + 1)
+                // Stake
+                await stakeMinipool(minipool1, { from: node })
+                await stakeMinipool(minipool2, { from: node })
+                await stakeMinipool(minipool3, { from: node })
+                // Register trusted nodes
+                await registerNode({ from: trustedNode1 });
+                await registerNode({ from: trustedNode2 });
+                await registerNode({ from: trustedNode3 });
+                await setNodeTrusted(trustedNode1, 'saas_1', 'node@home.com', owner);
+                await setNodeTrusted(trustedNode2, 'saas_2', 'node@home.com', owner);
+                await setNodeTrusted(trustedNode3, 'saas_3', 'node@home.com', owner);
+                // Set max penalty rate
+                let rocketMinipoolPenalty = await RocketMinipoolPenalty.deployed();
+                await rocketMinipoolPenalty.connect(owner).setMaxPenaltyRate('1'.ether);
+            })
+
+            it(printTitle('node', 'can not unstake legacy staked RPL while below minimum after slashing'), async () => {
+                const rocketNodeStaking = await RocketNodeStaking.deployed()
+                const stakedRPLBefore = await rocketNodeStaking.getNodeLegacyStakedRPL(node.address)
+                await withdrawAndCheck(minipool1, '15', node, false, '15', '0');
+                // Try to unstake 100 RPL which would bring node operator under requirement
+                await shouldRevert(
+                    unstakeLegacyRpl('100'.ether, { from: node }),
+                    'Was able to unstake while below 15% minimum',
+                    'Insufficient legacy staked RPL'
+                );
+                // Exit other 2 validators with further 200 RPL slashing
+                await withdrawAndCheck(minipool2, '15', node, false, '15', '0');
+                await withdrawAndCheck(minipool3, '15', node, false, '15', '0');
+                // User should have been slashed 300 RPL in total
+                const stakedRPLAfter = await rocketNodeStaking.getNodeLegacyStakedRPL(node.address)
+                assertBN.equal(stakedRPLBefore - stakedRPLAfter, '300'.ether);
+                // Withdraw remaining
+                await unstakeLegacyRpl(stakedRPLAfter, { from: node })
+            });
         })
     });
 }

@@ -290,7 +290,7 @@ contract RocketNodeStaking is RocketBase, RocketNodeStakingInterface {
         // Withdraw any RPL that has been unstaking long enough
         _withdrawUnstakingRPL(_nodeAddress);
         // Move RPL from staking to unstaking
-        _decreaseNodeLegacyRPLStake(_nodeAddress, _amount);
+        _decreaseNodeLegacyRPLStake(_nodeAddress, _amount, true);
         addUint(keccak256(abi.encodePacked("rpl.megapool.unstaking.amount", _nodeAddress)), _amount);
         // Reset the unstake time
         _setNodeLastUnstakeTime(_nodeAddress);
@@ -375,7 +375,7 @@ contract RocketNodeStaking is RocketBase, RocketNodeStakingInterface {
         // Transfer slashed amount to auction contract
         if (rplSlashAmount > 0) rocketVault.transferToken("rocketAuctionManager", IERC20(getContractAddress("rocketTokenRPL")), rplSlashAmount);
         // Update RPL stake amounts
-        _decreaseNodeLegacyRPLStake(_nodeAddress, rplSlashAmount);
+        _decreaseNodeLegacyRPLStake(_nodeAddress, rplSlashAmount, false);
         // Mark minipool as slashed
         setBool(keccak256(abi.encodePacked("minipool.rpl.slashed", msg.sender)), true);
         // Emit RPL slashed event
@@ -447,26 +447,29 @@ contract RocketNodeStaking is RocketBase, RocketNodeStakingInterface {
     /// @dev Decreases a node operator's legacy staked RPL amount
     /// @param _nodeAddress Address of node to decrease legacy staked RPL for
     /// @param _amount Amount to decrease by
-    function _decreaseNodeLegacyRPLStake(address _nodeAddress, uint256 _amount) internal {
+    /// @param _ensureMinimums Whether to assert the NO has the minimum required legacy RPL stake and sufficient unlocked RPL for the decrease
+    function _decreaseNodeLegacyRPLStake(address _nodeAddress, uint256 _amount, bool _ensureMinimums) internal {
         RocketNetworkSnapshotsInterface rocketNetworkSnapshots = RocketNetworkSnapshotsInterface(getContractAddress("rocketNetworkSnapshots"));
         bytes32 key = keccak256(abi.encodePacked("rpl.staked.node.amount", _nodeAddress));
         (,, uint224 totalStakedRPL) = rocketNetworkSnapshots.latest(key);
         _migrateLegacy(_nodeAddress, uint256(totalStakedRPL));
-        // Check amount does not exceed amount staked
+        // Compute legacy staked RPL storage key
         bytes32 legacyKey = keccak256(abi.encodePacked("rpl.legacy.staked.node.amount", _nodeAddress));
-        uint256 legacyStakedRPL = getUint(legacyKey);
-        // Check amount after decrease does not fall below minimum required
-        uint256 minimumLegacyStakedRPL = getNodeMinimumLegacyRPLStake(_nodeAddress);
-        require(
-            legacyStakedRPL >= _amount + minimumLegacyStakedRPL,
-            "Insufficient legacy staked RPL"
-        );
-        uint256 lockedRPL = getNodeLockedRPL(_nodeAddress);
-        // Check node has enough unlocked RPL for the reduction
-        require(
-            uint256(totalStakedRPL) >= _amount + lockedRPL,
-            "Insufficient RPL stake to reduce"
-        );
+        if (_ensureMinimums) {
+            // Check amount after decrease does not fall below minimum required
+            uint256 legacyStakedRPL = getUint(legacyKey);
+            uint256 minimumLegacyStakedRPL = getNodeMinimumLegacyRPLStake(_nodeAddress);
+            require(
+                legacyStakedRPL >= _amount + minimumLegacyStakedRPL,
+                "Insufficient legacy staked RPL"
+            );
+            // Check node has enough unlocked RPL for the reduction
+            uint256 lockedRPL = getNodeLockedRPL(_nodeAddress);
+            require(
+                uint256(totalStakedRPL) >= _amount + lockedRPL,
+                "Insufficient RPL stake to reduce"
+            );
+        }
         // Store new values
         rocketNetworkSnapshots.push(key, totalStakedRPL - uint224(_amount));
         subUint(legacyKey, _amount);
