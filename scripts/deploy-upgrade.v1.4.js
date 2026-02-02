@@ -113,6 +113,8 @@ async function deployUpgrade(rocketStorageAddress) {
     const deployedContracts = {};
     const contractPlan = {};
 
+    const deployTxs = []
+
     async function deployNetworkContract(name) {
         const plan = contractPlan[name];
         if (!plan) {
@@ -146,6 +148,8 @@ async function deployUpgrade(rocketStorageAddress) {
             address: address,
             instance: instance,
         };
+
+        deployTxs.push(rsTx);
     }
 
     // Setup contract plan
@@ -191,6 +195,9 @@ async function deployUpgrade(rocketStorageAddress) {
 
     // Deploy upgrade
     await deployNetworkContract('RocketUpgradeOneDotFour');
+
+    // Wait for all contract to be deployed
+    await Promise.all(deployTxs.map(deployTx => deployTx.wait()))
 
     // Set
     const upgradeContract = deployedContracts['RocketUpgradeOneDotFour'].instance;
@@ -383,6 +390,7 @@ async function verify() {
             const status = await verifier.getVerificationStatus(verificationResults[contract]);
             console.log(`  - ${contract}: ${status.result}`);
         }
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     console.log();
