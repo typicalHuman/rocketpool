@@ -18,6 +18,7 @@ import assert from 'assert';
 import { registerNode } from '../../test/_helpers/node';
 import { userDeposit } from '../../test/_helpers/deposit';
 import { deployMegapool, getMegapoolForNode, getValidatorInfo, nodeDeposit } from '../../test/_helpers/megapool';
+import { setDAOProtocolBootstrapSetting } from '../../test/dao/scenario-dao-protocol-bootstrap';
 
 const helpers = require('@nomicfoundation/hardhat-network-helpers');
 const hre = require('hardhat');
@@ -56,6 +57,9 @@ export default function() {
         });
 
         it(printTitle('upgrade', 'updates expected settings'), async () => {
+            // Disable node deposits ahead of upgrade
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'node.deposit.enabled', false, { from: owner })
+
             await executeUpgrade(owner, upgradeContract, rocketStorageAddress);
             const upgradeTime = await helpers.time.latest();
 
@@ -125,6 +129,9 @@ export default function() {
             assertBN.equal(split[1], '0.09'.ether); // Voter share
             assertBN.equal(split[2], '0'.ether);    // Protocol share
             assertBN.equal(split[3], '0.86'.ether); // User share
+
+            // Check node deposits are enabled
+            assert.equal(await rocketDAOProtocolSettingsNode.getDepositEnabled(), true);
         });
 
         it(printTitle('node', 'can create megapool and deposit from a node registered before upgrade'), async () => {

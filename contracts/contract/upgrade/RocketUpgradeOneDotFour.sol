@@ -159,6 +159,9 @@ contract RocketUpgradeOneDotFour is RocketBase {
             // Delete removed parameters
             deleteUint(keccak256(abi.encodePacked(settingNameSpace, "node.per.minipool.stake.minimum")));
             deleteUint(keccak256(abi.encodePacked(settingNameSpace, "node.per.minipool.stake.maximum")));
+
+            // Renable node deposits on upgrade execution
+            setBool(keccak256(abi.encodePacked(settingNameSpace, "node.deposit.enabled")), true);
         }
 
         // Minipool settings
