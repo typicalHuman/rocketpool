@@ -36,7 +36,7 @@ const CHAINS = {
         ],
     },
     'mainnet': {
-        genesisBlockTimestamp: 1695902400n,
+        genesisBlockTimestamp: 1606824023n,
         slotsPerHistoricalRoot: 8192n,
         beaconRoots: '0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02',
         genesisValidatorRoot: '0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95',
