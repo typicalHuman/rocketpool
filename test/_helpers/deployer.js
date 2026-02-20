@@ -1,9 +1,12 @@
 import { artifacts } from '../_utils/artifacts';
 import hre from 'hardhat';
+import { injectBNHelpers } from './bn';
 
 const fs = require('fs');
 const pako = require('pako');
 const ethers = hre.ethers;
+
+injectBNHelpers();
 
 function compressABI(abi) {
     return Buffer.from(pako.deflate(JSON.stringify(abi))).toString('base64');
@@ -13,11 +16,34 @@ function loadABI(abiFilePath) {
     return JSON.parse(fs.readFileSync(abiFilePath));
 }
 
+function formatConstructorArgs(args) {
+    return JSON.stringify(args, (key, value) =>
+        typeof value === 'bigint'
+            ? value.toString()
+            : value,
+    );
+}
+
 const defaultOpts = {
-    protocolVersion: '1.3.1',
+    protocolVersion: '1.4',
+    initialRevenueSplit: ['0.05'.ether, '0.09'.ether, '0'.ether],
     depositAddress: null,
     fixedSupplyTokenAddress: null,
+    deployThirdParty: false,
+    genesisBlockTimestamp: 1606824023n,
+    genesisValidatorRoot: '0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95',
+    secondsPerSlot: 12n,
+    slotsPerHistoricalRoot: 8192n,
+    beaconRootsHistoryBufferLength: 8191n,
+    beaconRoots: '0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02',
     logging: true,
+    forkSlots: [
+        74240n * 32n,   // Altair
+        144896n * 32n,  // Bellatrix
+        194048n * 32n,  // Capella
+        269568n * 32n,  // Deneb
+        364032n * 32n,  // Electra
+    ]
 };
 
 const contractNameMap = {
@@ -67,6 +93,7 @@ const contractNameMap = {
     rocketMinipoolBase: 'RocketMinipoolBase',
     rocketMinipoolBondReducer: 'RocketMinipoolBondReducer',
     rocketNetworkSnapshots: 'RocketNetworkSnapshots',
+    rocketNetworkSnapshotsTime: 'RocketNetworkSnapshotsTime',
     rocketNetworkVoting: 'RocketNetworkVoting',
     rocketDAOProtocolSettingsProposals: 'RocketDAOProtocolSettingsProposals',
     rocketDAOProtocolVerifier: 'RocketDAOProtocolVerifier',
@@ -75,8 +102,18 @@ const contractNameMap = {
     rocketDAOSecurityProposals: 'RocketDAOSecurityProposals',
     rocketDAOProtocolSettingsSecurity: 'RocketDAOProtocolSettingsSecurity',
     rocketDAOProtocolProposal: 'RocketDAOProtocolProposal',
+    rocketMegapoolFactory: 'RocketMegapoolFactory',
+    rocketMegapoolProxy: 'RocketMegapoolProxy',
+    rocketMegapoolManager: 'RocketMegapoolManager',
+    rocketMegapoolDelegate: 'RocketMegapoolDelegate',
+    rocketMegapoolPenalties: 'RocketMegapoolPenalties',
+    rocketNetworkRevenues: 'RocketNetworkRevenues',
+    rocketDAOProtocolSettingsMegapool: 'RocketDAOProtocolSettingsMegapool',
+    rocketDAOSecurityUpgrade: 'RocketDAOSecurityUpgrade',
     addressQueueStorage: 'AddressQueueStorage',
     addressSetStorage: 'AddressSetStorage',
+    beaconStateVerifier: 'BeaconStateVerifier',
+    linkedListStorage: 'LinkedListStorage',
 };
 
 export class RocketPoolDeployer {
@@ -90,6 +127,8 @@ export class RocketPoolDeployer {
     deployBlock = null;
 
     stages = [];
+
+    stageTxs = [];
 
     constructor(signer, opts = {}) {
         this.signer = signer;
@@ -118,6 +157,8 @@ export class RocketPoolDeployer {
         this.contractPlan['rocketMinipoolDelegate'].constructorArgs = [];
         this.contractPlan['rocketNodeDistributorDelegate'].constructorArgs = [];
         this.contractPlan['rocketMinipoolBase'].constructorArgs = [];
+        this.contractPlan['beaconStateVerifier'].constructorArgs = () => [this.rocketStorageInstance.target, opts.slotsPerHistoricalRoot, opts.forkSlots, opts.beaconRoots, opts.genesisBlockTimestamp, opts.genesisValidatorRoot];
+        this.contractPlan['rocketMegapoolDelegate'].constructorArgs = () => [this.rocketStorageInstance.target];
 
         // Setup deployment
         this.addStage('Deploy storage', 0, [
@@ -160,6 +201,7 @@ export class RocketPoolDeployer {
         this.addStage('Deploy immutable contracts', 30, [
                 async () => this.deployNetworkContract('rocketVault'),
                 async () => this.deployNetworkContract('rocketTokenRETH'),
+                async () => this.deployNetworkContract('rocketTokenRPL'),
             ],
         );
 
@@ -168,8 +210,16 @@ export class RocketPoolDeployer {
             ],
         );
 
-        this.addStage('Add combined minipool ABI', 50, [
+        this.addStage('Add combined minipool and megapool ABI', 50, [
                 async () => this.setNetworkContractAbi('rocketMinipool', compressABI(this.getMinipoolAbi())),
+                async () => this.setNetworkContractAbi('rocketMegapool', compressABI(this.getMegapoolAbi())),
+            ],
+        );
+
+        this.addStage('Initialise contracts', 60, [
+                async () => await this.deployedContracts['rocketMegapoolFactory'].instance.initialise(),
+                async () => await this.deployedContracts['rocketNetworkRevenues'].instance.initialise(...opts.initialRevenueSplit),
+                async () => await this.deployedContracts['rocketMerkleDistributorMainnet'].instance.initialise(),
             ],
         );
 
@@ -177,6 +227,13 @@ export class RocketPoolDeployer {
                 async () => this.setDeploymentStatus(),
             ],
         );
+
+        if (opts.deployThirdParty) {
+            this.addStage('Deploy third party contracts', 200, [
+                    async () => this.deployThirdPartyContracts(),
+                ],
+            );
+        }
     }
 
     log(string = '\n', color = 'gray') {
@@ -217,26 +274,42 @@ export class RocketPoolDeployer {
         return rocketMinipoolAbi;
     }
 
+    getMegapoolAbi() {
+        // Construct ABI for rocketMegapool
+        const rocketMegapoolAbi = []
+            .concat(artifacts.require('RocketMegapoolDelegate').abi)
+            .concat(artifacts.require('RocketMegapoolProxy').abi)
+            .filter(i => i.type !== 'fallback' && i.type !== 'receive');
+
+        rocketMegapoolAbi.push({ stateMutability: 'payable', type: 'fallback' });
+        rocketMegapoolAbi.push({ stateMutability: 'payable', type: 'receive' });
+
+        return rocketMegapoolAbi;
+    }
+
     async setDeploymentStatus() {
         // Disable direct access to storage now
         this.log('- Locking down storage');
-        await this.rocketStorageInstance.setDeployedStatus();
+        const tx = await this.rocketStorageInstance.setDeployedStatus();
+        this.stageTxs.push(tx);
     }
 
     async setString(name, value) {
         this.log('- Setting string `' + name + '` to ' + value, 'white');
-        await this.rocketStorageInstance.setString(
-            ethers.solidityPackedKeccak256(['string'], ['protocol.version']),
+        const tx = await this.rocketStorageInstance.setString(
+            ethers.solidityPackedKeccak256(['string'], [name]),
             value,
         );
+        this.stageTxs.push(tx);
     }
 
     async setUint(name, value) {
         this.log('- Setting uint `' + name + '` to ' + value, 'white');
-        await this.rocketStorageInstance.setUint(
-            ethers.solidityPackedKeccak256(['string'], ['protocol.version']),
+        const tx = await this.rocketStorageInstance.setUint(
+            ethers.solidityPackedKeccak256(['string'], [name]),
             value,
         );
+        this.stageTxs.push(tx);
     }
 
     async deployDepositContract() {
@@ -255,20 +328,24 @@ export class RocketPoolDeployer {
     async setNetworkContractAddress(name, address) {
         this.log(`- Setting address for "${name}" in storage to ${address}`);
         // Register the contract address as part of the network
-        await this.rocketStorageInstance.setBool(
+        const tx1 = await this.rocketStorageInstance.setBool(
             ethers.solidityPackedKeccak256(['string', 'address'], ['contract.exists', address]),
             true,
         );
         // Register the contract's name by address
-        await this.rocketStorageInstance.setString(
+        const tx2 = await this.rocketStorageInstance.setString(
             ethers.solidityPackedKeccak256(['string', 'address'], ['contract.name', address]),
             name,
         );
         // Register the contract's address by name (rocketVault and rocketTokenRETH addresses already stored)
-        await this.rocketStorageInstance.setAddress(
+        const tx3 = await this.rocketStorageInstance.setAddress(
             ethers.solidityPackedKeccak256(['string', 'string'], ['contract.address', name]),
             address,
         );
+
+        this.stageTxs.push(tx1);
+        this.stageTxs.push(tx2);
+        this.stageTxs.push(tx3);
     }
 
     async setNetworkContractAbi(name, abi) {
@@ -278,10 +355,12 @@ export class RocketPoolDeployer {
         }
         this.log(`- Setting abi for "${name}" in storage to ${compressedAbi.substr(0, 40)}...`);
         // Compress and store the ABI by name
-        await this.rocketStorageInstance.setString(
+        const tx = await this.rocketStorageInstance.setString(
             ethers.solidityPackedKeccak256(['string', 'string'], ['contract.abi', name]),
             compressedAbi,
         );
+
+        this.stageTxs.push(tx);
     }
 
     async deployRemainingContracts() {
@@ -316,7 +395,7 @@ export class RocketPoolDeployer {
 
         this.logDepth += 2;
 
-        this.log(`- Constructor args = ${JSON.stringify(constructorArgs)}`);
+        this.log(`- Constructor args = ${formatConstructorArgs(constructorArgs)}`);
 
         // Deploy and log result
         const instance = await artifact.newImmediate(...constructorArgs);
@@ -333,6 +412,8 @@ export class RocketPoolDeployer {
             this.rocketStorageInstance = instance;
             const receipt = await rsTx.wait();
             this.deployBlock = receipt.blockNumber;
+        } else {
+            this.stageTxs.push(rsTx);
         }
 
         await this.setNetworkContractAddress(name, address);
@@ -354,24 +435,27 @@ export class RocketPoolDeployer {
         const rocketDAOProtocol = this.deployedContracts['rocketDAOProtocol'].instance;
 
         if (ethers.isAddress(value)) {
-            this.log(`- Bootstrap pDAO setting address \`${settingPath}\` = "${value}" on \`${contractName}\``, 'white')
-            await rocketDAOProtocol.bootstrapSettingAddress(contractName, settingPath, value);
+            this.log(`- Bootstrap pDAO setting address \`${settingPath}\` = "${value}" on \`${contractName}\``, 'white');
+            const tx = await rocketDAOProtocol.bootstrapSettingAddress(contractName, settingPath, value);
+            this.stageTxs.push(tx);
         } else {
             if (typeof (value) == 'number' || typeof (value) == 'string' || typeof (value) == 'bigint') {
-                this.log(`- Bootstrap pDAO setting uint \`${settingPath}\` = ${value} on \`${contractName}\``, 'white')
-                await rocketDAOProtocol.bootstrapSettingUint(contractName, settingPath, value);
-            }
-            else if (typeof (value) == 'boolean') {
-                this.log(`- Bootstrap pDAO setting bool \`${settingPath}\` = ${value} on \`${contractName}\``, 'white')
-                await rocketDAOProtocol.bootstrapSettingBool(contractName, settingPath, value);
+                this.log(`- Bootstrap pDAO setting uint \`${settingPath}\` = ${value} on \`${contractName}\``, 'white');
+                const tx = await rocketDAOProtocol.bootstrapSettingUint(contractName, settingPath, value);
+                this.stageTxs.push(tx);
+            } else if (typeof (value) == 'boolean') {
+                this.log(`- Bootstrap pDAO setting bool \`${settingPath}\` = ${value} on \`${contractName}\``, 'white');
+                const tx = await rocketDAOProtocol.bootstrapSettingBool(contractName, settingPath, value);
+                this.stageTxs.push(tx);
             }
         }
     }
 
     async bootstrapProtocolDAOClaimers(trustedNodePerc, protocolPerc, nodePerc) {
         const rocketDAOProtocol = this.deployedContracts['rocketDAOProtocol'].instance;
-        this.log(`- Bootstrap pDAO setting claimers: oDAO = ${ethers.formatEther(trustedNodePerc * 100n)}%, protocol = ${ethers.formatEther(protocolPerc * 100n)}%, node = ${ethers.formatEther(nodePerc * 100n)}% `, 'white')
-        await rocketDAOProtocol.bootstrapSettingClaimers(trustedNodePerc, protocolPerc, nodePerc);
+        this.log(`- Bootstrap pDAO setting claimers: oDAO = ${ethers.formatEther(trustedNodePerc * 100n)}%, protocol = ${ethers.formatEther(protocolPerc * 100n)}%, node = ${ethers.formatEther(nodePerc * 100n)}% `, 'white');
+        const tx = await rocketDAOProtocol.bootstrapSettingClaimers(trustedNodePerc, protocolPerc, nodePerc);
+        this.stageTxs.push(tx);
     }
 
     async deploy() {
@@ -387,10 +471,18 @@ export class RocketPoolDeployer {
 
             this.logDepth += 2;
 
+            // Clear txs for this stage
+            this.stageTxs = [];
+
             // Iterate over steps and execute
             for (let i = 0; i < stage.steps.length; ++i) {
+                // Execute the step
                 await stage.steps[i]();
             }
+
+            // Wait for all txs to complete
+            this.log(`Waiting for ${this.stageTxs.length} txs to be mined`)
+            await Promise.all(this.stageTxs.map(async tx => tx.wait()))
 
             this.logDepth -= 2;
 
@@ -398,5 +490,23 @@ export class RocketPoolDeployer {
         }
 
         return this.deployedContracts;
+    }
+
+    async deployThirdPartyContract(artifactName, constructorArgs = []) {
+        const artifact = artifacts.require(artifactName);
+        // Deploy and log result
+        this.log('- Deploying ' + artifact.contractName, 'white');
+        const instance = await artifact.newImmediate(...constructorArgs);
+        const rsTx = await instance.deploymentTransaction();
+        const address = instance.target;
+        this.log(`- Deployed to ${address} @ ${rsTx.hash}`);
+        this.stageTxs.push(rsTx);
+    }
+
+    async deployThirdPartyContracts() {
+        await this.deployThirdPartyContract('EthBalanceChecker');
+        await this.deployThirdPartyContract('Multicall2');
+        await this.deployThirdPartyContract('RocketSignerRegistry');
+        await this.deployThirdPartyContract('UniswapOracleMock');
     }
 }

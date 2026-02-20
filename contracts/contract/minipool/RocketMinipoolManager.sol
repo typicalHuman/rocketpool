@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-pragma solidity 0.8.18;
+pragma solidity 0.8.30;
 pragma abicoder v2;
 
 import "../RocketBase.sol";
@@ -36,7 +36,7 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
     event ReductionCancelled(address indexed minipool, uint256 time);
 
     constructor(RocketStorageInterface _rocketStorageAddress) RocketBase(_rocketStorageAddress) {
-        version = 5;
+        version = 6;
     }
 
     /// @notice Get the number of minipools in the network
@@ -177,9 +177,10 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
     /// @notice Get the number of minipools owned by a node that are in staking status
     /// @param _nodeAddress The node operator to query the count of staking minipools of
     function getNodeStakingMinipoolCount(address _nodeAddress) override public view returns (uint256) {
-        RocketNodeDepositInterface rocketNodeDeposit = RocketNodeDepositInterface(getContractAddress("rocketNodeDeposit"));
         // Get valid deposit amounts
-        uint256[] memory depositSizes = rocketNodeDeposit.getDepositAmounts();
+        uint256[2] memory depositSizes;
+        depositSizes[0] = 16 ether;
+        depositSizes[1] = 8 ether;
         uint256 total;
         for (uint256 i = 0; i < depositSizes.length; ++i){
             total = total + getNodeStakingMinipoolCountBySize(_nodeAddress, depositSizes[i]);
@@ -380,17 +381,15 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
         bytes32 finalisedKey = keccak256(abi.encodePacked("node.minipools.finalised", msg.sender));
         require(!getBool(finalisedKey), "Minipool has already been finalised");
         setBool(finalisedKey, true);
-        // Get ETH matched (before adding to finalised count in case of fallback calculation)
-        RocketNodeStakingInterface rocketNodeStaking = RocketNodeStakingInterface(getContractAddress("rocketNodeStaking"));
-        uint256 ethMatched = rocketNodeStaking.getNodeETHMatched(_nodeAddress);
         // Update the node specific count
         addUint(keccak256(abi.encodePacked("node.minipools.finalised.count", _nodeAddress)), 1);
         // Update the total count
         addUint(keccak256(bytes("minipools.finalised.count")), 1);
         // Update ETH matched
         RocketNetworkSnapshots rocketNetworkSnapshots = RocketNetworkSnapshots(getContractAddress("rocketNetworkSnapshots"));
-        ethMatched -= RocketMinipoolInterface(msg.sender).getUserDepositBalance();
         bytes32 key = keccak256(abi.encodePacked("eth.matched.node.amount", _nodeAddress));
+        uint256 ethMatched = rocketNetworkSnapshots.latestValue(key);
+        ethMatched -= RocketMinipoolInterface(msg.sender).getUserDepositBalance();
         rocketNetworkSnapshots.push(key, uint224(ethMatched));
         // Decrement active count
         key = keccak256(abi.encodePacked("minipools.active.count", _nodeAddress));
@@ -413,7 +412,7 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
         // Get current active minipool count for this node operator (before we insert into address set in case it uses fallback calc)
         uint256 activeMinipoolCount = getNodeActiveMinipoolCount(_nodeAddress);
         // Create minipool contract
-        address contractAddress = deployContract(_nodeAddress, _salt);
+        address contractAddress = _deployContract(_nodeAddress, _salt);
         // Initialise minipool data
         setBool(keccak256(abi.encodePacked("minipool.exists", contractAddress)), true);
         // Add minipool to indexes
@@ -484,12 +483,10 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
         RocketMinipoolInterface minipool = RocketMinipoolInterface(msg.sender);
         address nodeAddress = minipool.getNodeAddress();
         // Update ETH matched
-        RocketNodeStakingInterface rocketNodeStaking = RocketNodeStakingInterface(getContractAddress("rocketNodeStaking"));
-        uint256 ethMatched = rocketNodeStaking.getNodeETHMatched(nodeAddress);
-        ethMatched = ethMatched - minipool.getUserDepositBalance();
-        // Record in snapshot manager
         RocketNetworkSnapshots rocketNetworkSnapshots = RocketNetworkSnapshots(getContractAddress("rocketNetworkSnapshots"));
         bytes32 key = keccak256(abi.encodePacked("eth.matched.node.amount", nodeAddress));
+        uint256 ethMatched = uint256(rocketNetworkSnapshots.latestValue(key));
+        ethMatched -= minipool.getUserDepositBalance();
         rocketNetworkSnapshots.push(key, uint224(ethMatched));
         // Update minipool data
         setBool(keccak256(abi.encodePacked("minipool.exists", msg.sender)), false);
@@ -519,7 +516,7 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
 
     /// @dev Internal logic to set a minipool's pubkey, reverts if pubkey already set
     /// @param _pubkey The pubkey to set for the calling minipool
-    function _setMinipoolPubkey(address _minipool, bytes calldata _pubkey) private {
+    function _setMinipoolPubkey(address _minipool, bytes calldata _pubkey) internal {
         // Check validator pubkey is not in use
         require(getMinipoolByPubkey(_pubkey) == address(0x0), "Validator pubkey is in use");
         // Load contracts
@@ -559,7 +556,7 @@ contract RocketMinipoolManager is RocketBase, RocketMinipoolManagerInterface {
     /// @dev Performs a CREATE2 deployment of a minipool contract with given salt
     /// @param _nodeAddress The owning node operator's address
     /// @param _salt A salt used in determining the minipool's address
-    function deployContract(address _nodeAddress, uint256 _salt) private returns (address) {
+    function _deployContract(address _nodeAddress, uint256 _salt) internal returns (address) {
         RocketMinipoolFactoryInterface rocketMinipoolFactory = RocketMinipoolFactoryInterface(getContractAddress("rocketMinipoolFactory"));
         return rocketMinipoolFactory.deployContract(_nodeAddress, _salt);
     }

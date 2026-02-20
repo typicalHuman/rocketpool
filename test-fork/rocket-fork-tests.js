@@ -1,4 +1,13 @@
-import { afterEach, beforeEach, describe } from 'mocha';
+import { afterEach, before, beforeEach, describe, it } from 'mocha';
+import {
+    artifacts,
+    RocketDAONodeTrusted,
+    RocketDAONodeTrustedProposals,
+    RocketDAOProposal,
+    RocketNodeStaking,
+    RocketStorage,
+} from '../test/_utils/artifacts';
+import { voteStates } from '../test/dao/scenario-dao-proposal';
 import { injectBNHelpers } from '../test/_helpers/bn';
 import pako from 'pako';
 import { endSnapShot, startSnapShot } from '../test/_utils/snapshotting';

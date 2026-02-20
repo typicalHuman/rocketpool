@@ -43,9 +43,11 @@ const defaultOpts = {
     preamble: '',
 };
 
-const endpointMap = {
-    'mainnet': 'https://api.etherscan.io/api',
-    'hoodi': 'https://api-hoodi.etherscan.io/api',
+const endpoint = 'https://api.etherscan.io/v2/api'
+
+const chainIdMap = {
+    'mainnet': '1',
+    'hoodi': '560048',
 };
 
 export class EtherscanVerifier {
@@ -74,6 +76,8 @@ export class EtherscanVerifier {
 
         for (const contract of contracts) {
             results[contract.contractName] = await this.verify(contract.buildInfoId, contract.sourceName, contract.contractName, contract.address, contract.constructorArgs);
+            // Avoid Etherscans 3/s rate limit
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         return results;
@@ -149,14 +153,12 @@ export class EtherscanVerifier {
     }
 
     async getVerificationStatus(guid) {
-        const apiEndpoint = endpointMap[this.opts.chain];
-        const result = await axios.get(`${apiEndpoint}?module=contract&action=checkverifystatus&apikey=${this.opts.apiKey}&guid=${guid}`);
+        const result = await axios.get(`${endpoint}?chainid=${chainIdMap[this.opts.chain]}&module=contract&action=checkverifystatus&apikey=${this.opts.apiKey}&guid=${guid}`);
         return result.data;
     }
 
     async isVerified(address) {
-        const apiEndpoint = endpointMap[this.opts.chain];
-        const result = await axios.get(`${apiEndpoint}?module=contract&action=getabi&apikey=${this.opts.apiKey}&address=${address}`);
+        const result = await axios.get(`${endpoint}?chainid=${chainIdMap[this.opts.chain]}&module=contract&action=getabi&apikey=${this.opts.apiKey}&address=${address}`);
         return result.data.status !== '0';
     }
 
@@ -207,7 +209,7 @@ export class EtherscanVerifier {
 
         // Submit to API
         const formData = querystring.stringify(payload);
-        const result = await axios.post(endpointMap[this.opts.chain], formData);
+        const result = await axios.post(`${endpoint}?chainid=${chainIdMap[this.opts.chain]}`, formData);
 
         // Check result
         if (result.data.status !== '1') {

@@ -3,7 +3,6 @@ import { printTitle } from '../_utils/formatting';
 import { shouldRevert } from '../_utils/testing';
 import { submitPrices } from '../_helpers/network';
 import {
-    getNodeEffectiveRPLStake,
     nodeStakeRPL,
     registerNode,
     setNodeRPLWithdrawalAddress,
@@ -11,8 +10,8 @@ import {
     setNodeWithdrawalAddress,
 } from '../_helpers/node';
 import {
-    RevertOnTransfer, RocketDAONodeTrustedProposals,
-    RocketDAONodeTrustedSettingsMinipool,
+    RevertOnTransfer,
+    RocketDAONodeTrustedProposals,
     RocketDAOProtocolSettingsNode,
     RocketMerkleDistributorMainnet,
     RocketRewardsPool,
@@ -27,9 +26,6 @@ import {
     setRPLInflationStartTime,
 } from '../dao/scenario-dao-protocol-bootstrap';
 import { mintRPL } from '../_helpers/tokens';
-import { createMinipool, stakeMinipool } from '../_helpers/minipool';
-import { userDeposit } from '../_helpers/deposit';
-import { setDAONodeTrustedBootstrapSetting } from '../dao/scenario-dao-node-trusted-bootstrap';
 import { executeRewards, submitRewards } from './scenario-submit-rewards';
 import { claimRewards } from './scenario-claim-rewards';
 import { claimAndStakeRewards } from './scenario-claim-and-stake-rewards';
@@ -55,6 +51,7 @@ export default function() {
             unregisteredNodeTrusted1,
             unregisteredNodeTrusted2,
             node1WithdrawalAddress,
+            node1RplWithdrawalAddress,
             random;
 
         // Constants
@@ -124,13 +121,11 @@ export default function() {
                 unregisteredNodeTrusted1,
                 unregisteredNodeTrusted2,
                 node1WithdrawalAddress,
+                node1RplWithdrawalAddress,
                 random,
             ] = await ethers.getSigners();
 
             let slotTimestamp = '1600000000';
-
-            // Set settings
-            await setDAONodeTrustedBootstrapSetting(RocketDAONodeTrustedSettingsMinipool, 'minipool.scrub.period', scrubPeriod, { from: owner });
 
             // Register nodes
             await registerNode({ from: registeredNode1 });
@@ -158,28 +153,6 @@ export default function() {
             await mintRPL(owner, registeredNode2, '32'.ether);
             await nodeStakeRPL('32'.ether, { from: registeredNode1 });
             await nodeStakeRPL('32'.ether, { from: registeredNode2 });
-
-            // User deposits
-            await userDeposit({ from: userOne, value: '48'.ether });
-
-            // Create minipools
-            let minipool1 = await createMinipool({ from: registeredNode1, value: '16'.ether });
-            let minipool2 = await createMinipool({ from: registeredNode2, value: '16'.ether });
-            let minipool3 = await createMinipool({ from: registeredNode2, value: '16'.ether });
-
-            // Wait required scrub period
-            await helpers.time.increase(scrubPeriod + 1);
-
-            // Stake minipools
-            await stakeMinipool(minipool1, { from: registeredNode1 });
-            await stakeMinipool(minipool2, { from: registeredNode2 });
-            await stakeMinipool(minipool3, { from: registeredNode2 });
-
-            // Check node effective stakes
-            let node1EffectiveStake = await getNodeEffectiveRPLStake(registeredNode1);
-            let node2EffectiveStake = await getNodeEffectiveRPLStake(registeredNode2);
-            assertBN.equal(node1EffectiveStake, '16'.ether, 'Incorrect node 1 effective stake');
-            assertBN.equal(node2EffectiveStake, '32'.ether, 'Incorrect node 2 effective stake');
         });
 
         /*** Setting Claimers *************************/
@@ -226,6 +199,37 @@ export default function() {
             }), 'Percentages were updated', 'Total does not equal 100%');
         });
 
+        /*** Trusted Nodes *************************/
+
+        it(printTitle('trusted node', 'can allocate ETH from smoothing pool to pDAO'), async () => {
+            const rewards = [
+                {
+                    address: registeredNode1.address,
+                    network: 0,
+                    trustedNodeRPL: '0'.ether,
+                    nodeRPL: '0'.ether,
+                    nodeETH: '0'.ether,
+                    voterETH: 0n
+                },
+            ];
+
+            const rocketSmoothingPool = await RocketSmoothingPool.deployed();
+            const rocketRewardsPool = await RocketRewardsPool.deployed();
+
+            // Send 0.5 ETH to smoothing pool
+            await owner.sendTransaction({
+                to: rocketSmoothingPool.target,
+                value: '0.5'.ether,
+            });
+
+            // Send 0.5 ETH to rewards pool as "voter share"
+            await rocketRewardsPool.depositVoterShare({ value: '0.5'.ether })
+
+            // Submit reward submission with 1 ETH to treasury
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '1'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '1'.ether, { from: registeredNodeTrusted2 });
+        })
+
         /*** Regular Nodes *************************/
 
         it(printTitle('node', 'can claim RPL and ETH'), async () => {
@@ -242,7 +246,7 @@ export default function() {
             const rocketSmoothingPool = await RocketSmoothingPool.deployed();
             await owner.sendTransaction({
                 to: rocketSmoothingPool.target,
-                value: '20'.ether
+                value: '20'.ether,
             });
 
             const rocketRewardsPool = await RocketRewardsPool.deployed();
@@ -256,6 +260,7 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
                 {
                     address: registeredNode2.address,
@@ -263,6 +268,7 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '2'.ether,
                     nodeETH: '1'.ether,
+                    voterETH: 0n
                 },
                 {
                     address: registeredNodeTrusted1.address,
@@ -270,6 +276,7 @@ export default function() {
                     trustedNodeRPL: '1'.ether,
                     nodeRPL: '2'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
                 {
                     address: userOne.address,
@@ -277,10 +284,11 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1.333'.ether,
                     nodeETH: '0.3'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '2'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '2'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '2'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '2'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimRewards(registeredNode1.address, [0], [rewards], {
@@ -297,8 +305,8 @@ export default function() {
             });
 
             // Do a second claim interval
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimRewards(registeredNode1.address, [1], [rewards], {
@@ -323,7 +331,7 @@ export default function() {
             const rocketSmoothingPool = await RocketSmoothingPool.deployed();
             await owner.sendTransaction({
                 to: rocketSmoothingPool.target,
-                value: '20'.ether
+                value: '20'.ether,
             });
 
             // Submit rewards snapshot
@@ -334,12 +342,53 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
+            await claimRewards(registeredNode1.address, [0], [rewards], {
+                from: node1WithdrawalAddress,
+            });
+        });
+
+        it(printTitle('node', 'can claim voter ETH to RPL withdrawal address'), async () => {
+            // Initialize RPL inflation & claims contract
+            let rplInflationStartTime = await rplInflationSetup();
+            await rewardsContractSetup('0.5'.ether, '0'.ether, '0.5'.ether);
+
+            // Move to inflation start plus one claim interval
+            let currentTime = BigInt(await helpers.time.latest());
+            assertBN.isBelow(currentTime, rplInflationStartTime, 'Current block should be below RPL inflation start time');
+            await helpers.time.increase(rplInflationStartTime - currentTime + claimIntervalTime);
+
+            // Send ETH to rewards pool
+            const rocketSmoothingPool = await RocketSmoothingPool.deployed();
+            await owner.sendTransaction({
+                to: rocketSmoothingPool.target,
+                value: '20'.ether,
+            });
+
+            // Set node's RPL withdrawal address
+            await setNodeRPLWithdrawalAddress(registeredNode1, node1RplWithdrawalAddress, { from: node1WithdrawalAddress });
+
+            // Submit rewards snapshot
+            const rewards = [
+                {
+                    address: registeredNode1.address,
+                    network: 0,
+                    trustedNodeRPL: '0'.ether,
+                    nodeRPL: '0'.ether,
+                    nodeETH: '1'.ether,
+                    voterETH: '2'.ether,
+                },
+            ];
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+
+            // Claim
             await claimRewards(registeredNode1.address, [0], [rewards], {
                 from: node1WithdrawalAddress,
             });
@@ -363,23 +412,27 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
             // Create 3 snapshots
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             let treeData = parseRewardsMap(rewards);
             let proof = treeData.proof.claims[ethers.getAddress(registeredNode1.address)];
-            let amountsRPL = [proof.amountRPL];
-            let amountsETH = [proof.amountETH];
-            let proofs = [proof.proof];
-
             let rocketMerkleDistributorMainnet = await RocketMerkleDistributorMainnet.deployed();
 
             // Attempt to claim reward for registeredNode1 with registeredNode2
-            await shouldRevert(rocketMerkleDistributorMainnet.connect(registeredNode2).claim(registeredNode2, [0], amountsRPL, amountsETH, proofs, { from: registeredNode2 }), 'Was able to claim with invalid proof', 'Invalid proof');
+            const claim = {
+                rewardIndex: 0,
+                amountRPL: proof.amountRPL,
+                amountSmoothingPoolETH: proof.amountSmoothingPoolETH,
+                amountVoterETH: proof.amountVoterETH,
+                merkleProof: proof.proof
+            }
+            await shouldRevert(rocketMerkleDistributorMainnet.connect(registeredNode2).claim(registeredNode2, [claim], { from: registeredNode2 }), 'Was able to claim with invalid proof', 'Invalid proof');
         });
 
         it(printTitle('node', 'can not claim same interval twice'), async () => {
@@ -400,16 +453,17 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
             // Create 3 snapshots
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
-            await submitRewards(2, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(2, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(2, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(2, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimRewards(registeredNode1.address, [0, 1], [rewards, rewards], {
@@ -447,6 +501,7 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
                 {
                     address: registeredNode2.address,
@@ -454,16 +509,17 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '2'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
             // Submit 2 snapshots
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
-            await submitRewards(2, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(2, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(2, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(2, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimRewards(registeredNode1.address, [0], [rewards], {
@@ -495,6 +551,7 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
                 {
                     address: registeredNode2.address,
@@ -502,10 +559,11 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '2'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimAndStakeRewards(registeredNode1.address, [0], [rewards], '1'.ether, {
@@ -516,8 +574,8 @@ export default function() {
             });
 
             // Do a second claim interval
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimAndStakeRewards(registeredNode1.address, [1], [rewards], '0.5'.ether, {
@@ -549,10 +607,11 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Can't claim from node address
             await shouldRevert(claimAndStakeRewards(registeredNode1.address, [0], [rewards], '1'.ether, {
@@ -586,10 +645,11 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Can claim from withdrawal address
             await claimAndStakeRewards(registeredNode1.address, [0], [rewards], '1'.ether, {
@@ -615,10 +675,11 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await shouldRevert(claimAndStakeRewards(registeredNode1.address, [0], [rewards], '2'.ether, {
@@ -644,12 +705,13 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(1, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(1, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim RPL
             await claimAndStakeRewards(registeredNode1.address, [0, 1], [rewards, rewards], '2'.ether, {
@@ -681,11 +743,12 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Kick a trusted node so consensus becomes 2 votes again
             await kickTrustedNode(unregisteredNodeTrusted1, [registeredNodeTrusted1, registeredNodeTrusted2, unregisteredNodeTrusted1]);
@@ -716,11 +779,12 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Kick a trusted node so consensus becomes 2 votes again
             await kickTrustedNode(unregisteredNodeTrusted1, [registeredNodeTrusted1, registeredNodeTrusted2, unregisteredNodeTrusted1]);
@@ -751,16 +815,17 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
             // already have consensus, should have executed
             await shouldRevert(executeRewards(0, rewards, '0'.ether, '0'.ether, { from: random }), 'Already executed');
 
             // should allow another vote past consensus
-            await submitRewards(0, rewards, '0'.ether, '0'.ether, { from: unregisteredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '0'.ether, '0'.ether, { from: unregisteredNodeTrusted1 });
 
         });
 
@@ -784,13 +849,14 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '1'.ether,
                     nodeETH: '0'.ether,
+                    voterETH: 0n
                 },
             ];
 
             // Submit 10 reward intervals
             for (let i = 0; i < 10; i++) {
-                await submitRewards(i, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
-                await submitRewards(i, rewards, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
+                await submitRewards(i, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+                await submitRewards(i, rewards, '0'.ether, '0'.ether, '0'.ether, { from: registeredNodeTrusted2 });
             }
 
             // Some arbitrary intervals to claim
@@ -804,7 +870,7 @@ export default function() {
             const rocketStorage = await RocketStorage.deployed();
             const key = ethers.solidityPackedKeccak256(
                 ['string', 'address', 'uint256'],
-                ['rewards.interval.claimed', registeredNode1.address, 0n]
+                ['rewards.interval.claimed', registeredNode1.address, 0n],
             );
             const bitmap = Number(await rocketStorage.getUint(key));
 
@@ -841,7 +907,7 @@ export default function() {
             const rocketSmoothingPool = await RocketSmoothingPool.deployed();
             await owner.sendTransaction({
                 to: rocketSmoothingPool.target,
-                value: '20'.ether
+                value: '20'.ether,
             });
 
             // Submit rewards snapshot
@@ -852,10 +918,11 @@ export default function() {
                     trustedNodeRPL: '0'.ether,
                     nodeRPL: '0'.ether,
                     nodeETH: '1'.ether,
+                    voterETH: 0n
                 },
             ];
-            await submitRewards(0, rewards, '0'.ether, '1'.ether, { from: registeredNodeTrusted1 });
-            await submitRewards(0, rewards, '0'.ether, '1'.ether, { from: registeredNodeTrusted2 });
+            await submitRewards(0, rewards, '0'.ether, '1'.ether, '0'.ether, { from: registeredNodeTrusted1 });
+            await submitRewards(0, rewards, '0'.ether, '1'.ether, '0'.ether, { from: registeredNodeTrusted2 });
 
             // Claim from node which should fail to send the ETH and increase outstanding balance
             await claimAndStakeRewards(registeredNode1.address, [0], [rewards], '0'.ether, {

@@ -6,12 +6,14 @@ import {
     setDaoProtocolBootstrapModeDisabled,
     setDAOProtocolBootstrapSecurityInvite,
     setDAOProtocolBootstrapSetting,
+    setDAOProtocolBootstrapSettingAddressList,
     setDAOProtocolBootstrapSettingMulti,
 } from './scenario-dao-protocol-bootstrap';
 import {
     RocketDAOProtocolSettingsAuction,
     RocketDAOProtocolSettingsDeposit,
     RocketDAOProtocolSettingsInflation,
+    RocketDAOProtocolSettingsMegapool,
     RocketDAOProtocolSettingsMinipool,
     RocketDAOProtocolSettingsNetwork,
     RocketDAOProtocolSettingsProposals,
@@ -36,16 +38,11 @@ import {
     getDelegatedVotingPower,
     getPhase2VotingPower,
     getSubIndex,
+    setDaoProtocolNodeCommissionShare,
+    setDaoProtocolNodeShareSecurityCouncilAdder,
+    setDaoProtocolVoterShare,
 } from './scenario-dao-protocol';
-import {
-    getNodeCount,
-    nodeSetDelegate,
-    nodeStakeRPL,
-    nodeWithdrawRPL,
-    registerNode,
-    setRPLLockingAllowed,
-} from '../_helpers/node';
-import { createMinipool, getMinipoolMinimumRPLStake } from '../_helpers/minipool';
+import { getNodeCount, nodeSetDelegate, nodeStakeRPL, registerNode, setRPLLockingAllowed } from '../_helpers/node';
 import { mintRPL } from '../_helpers/tokens';
 import { userDeposit } from '../_helpers/deposit';
 import {
@@ -62,6 +59,8 @@ import { daoSecurityMemberJoin, getDAOSecurityMemberIsValid } from './scenario-d
 import { voteStates } from './scenario-dao-proposal';
 import * as assert from 'assert';
 import { globalSnapShot } from '../_utils/snapshotting';
+import { nodeDepositMulti } from '../_helpers/megapool';
+import { unstakeRpl } from '../node/scenario-unstake-rpl';
 
 const helpers = require('@nomicfoundation/hardhat-network-helpers');
 const hre = require('hardhat');
@@ -70,7 +69,7 @@ const ethers = hre.ethers;
 export default function() {
     describe('RocketDAOProtocol', () => {
         // Accounts
-        let owner, random, proposer, node1, node2, securityMember1;
+        let owner, random, proposer, node1, node2, securityMember1, allowListed;
         let nodeMap = {};
 
         // Settings to retrieve
@@ -99,6 +98,7 @@ export default function() {
                 node1,
                 node2,
                 securityMember1,
+                allowListed,
             ] = await ethers.getSigners();
 
             // Add some ETH into the DP
@@ -194,6 +194,29 @@ export default function() {
             });
         });
 
+        it(printTitle('guardian', 'cannot update "user.distribute.delay.shortfall" lower than "user.distribute.delay"'), async () => {
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay.shortfall', 10000, {
+                from: owner,
+            })
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay', 8000, {
+                from: owner,
+            });
+            // Cannot set delay with shortfall lower
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay.shortfall', 7000, {
+                    from: owner,
+                }),
+                'Was able to set delay with shortfall lower than regular delay',
+                'Value must be >= user.distribute.delay');
+            // Cannot set regular delay higher
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'user.distribute.delay', 11000, {
+                    from: owner,
+                }),
+                'Was able to set delay higher than delay with shortfall',
+                'Value must be <= user.distribute.delay.shortfall');
+        });
+
         // Verify each setting contract is enabled correctly. These settings are tested in greater detail in the relevent contracts
         it(printTitle('guardian', 'updates multiple settings at once while bootstrap mode is enabled'), async () => {
             // Set via bootstrapping
@@ -285,16 +308,20 @@ export default function() {
 
         });
 
-        async function createNode(minipoolCount, node) {
-            // Stake RPL to cover minipools
-            let minipoolRplStake = await getMinipoolMinimumRPLStake();
-            let rplStake = minipoolRplStake * minipoolCount.BN;
+        async function createNode(validatorCount, node) {
+            // Stake RPL for voting power
+            let rplStake = '100'.ether * validatorCount.BN;
             const nodeCount = await getNodeCount();
             await registerNode({ from: node });
             nodeMap[node.address] = Number(nodeCount);
             await mintRPL(owner, node, rplStake);
             await nodeStakeRPL(rplStake, { from: node });
-            await createMinipool({ from: node, value: '16'.ether });
+            // Create validators
+            const deposits = Array(validatorCount).fill({
+                bondAmount: '4'.ether,
+                useExpressTicket: false,
+            });
+            await nodeDepositMulti(node, deposits);
             // Allow RPL locking by default
             await setRPLLockingAllowed(node, true, { from: node });
         }
@@ -448,31 +475,7 @@ export default function() {
                     await shouldRevert(createValidProposal(), 'Was able to create proposal', 'Node is not allowed to lock RPL');
                 });
 
-                it(printTitle('proposer', 'can not withdraw excess RPL if it is locked'), async () => {
-                    // Give the proposer 150% collateral + proposal bond + 50
-                    await mintRPL(owner, proposer, '2390'.ether);
-                    await nodeStakeRPL('2390'.ether, { from: proposer });
-
-                    // Create a minipool with a node to use as a challenger
-                    await createNode(1, node1);
-
-                    // Create a valid proposal
-                    await createValidProposal();
-
-                    // Wait for withdraw cooldown
-                    await helpers.time.increase(Math.max(voteDelayTime, rewardClaimPeriodTime) + 1);
-
-                    // Let the proposal expire to unlock the bond
-                    await helpers.time.increase(votePhase1Time + votePhase2Time + 1);
-
-                    // Try to withdraw the 100 RPL bond (below 150% after lock)
-                    await shouldRevert(nodeWithdrawRPL(proposalBond, { from: proposer }), 'Was able to withdraw', 'Node\'s staked RPL balance after withdrawal is less than required balance');
-
-                    // Try to withdraw the additional 50 RPL (still above 150% after lock)
-                    await nodeWithdrawRPL('50'.ether, { from: proposer });
-                });
-
-                it(printTitle('proposer', 'can withdraw excess RPL after it is unlocked'), async () => {
+                it(printTitle('proposer', 'can unstake excess RPL after it is unlocked'), async () => {
                     // Give the proposer 150% collateral + proposal bond + 50
                     await mintRPL(owner, proposer, '2390'.ether);
                     await nodeStakeRPL('2390'.ether, { from: proposer });
@@ -492,8 +495,8 @@ export default function() {
                     // Wait the withdrawal cooldown time
                     await helpers.time.increase(rewardClaimPeriodTime + 1);
 
-                    // Withdraw excess
-                    await nodeWithdrawRPL('150'.ether, { from: proposer });
+                    // Unstake excess
+                    await unstakeRpl('150'.ether, { from: proposer });
                 });
 
                 it(printTitle('proposer', 'can not create proposal with invalid leaf count'), async () => {
@@ -789,6 +792,15 @@ export default function() {
                     await shouldRevert(daoProtocolSubmitRoot(propId, subRootIndex, pollard, { from: proposer }), 'Accepted invalid hash', 'Invalid hash');
                 });
 
+                it(printTitle('voter', 'can not set delegate to same value'), async () => {
+                    await nodeSetDelegate(nodes[1].address, { from: nodes[0] });
+                    await shouldRevert(
+                        nodeSetDelegate(nodes[1].address, { from: nodes[0] }),
+                        'Was able to set delegate to same value',
+                        'Delegate already set to value',
+                    );
+                });
+
                 /**
                  * Override Votes
                  */
@@ -948,10 +960,6 @@ export default function() {
                  */
 
                 it(printTitle('proposer', 'can invite a security council member'), async () => {
-                    // Create a minipool with a node to use as a challenger
-                    let challenger = node1;
-                    await createNode(1, challenger);
-
                     // Invite security council member
                     let ABI = ['function proposalSecurityInvite(string,address)'];
                     let iface = new ethers.Interface(ABI);
@@ -984,10 +992,6 @@ export default function() {
                     await setDAOProtocolBootstrapSecurityInvite('Member', securityMember1, { from: owner });
                     await daoSecurityMemberJoin({ from: securityMember1 });
 
-                    // Create a minipool with a node to use as a challenger
-                    let challenger = node1;
-                    await createNode(1, challenger);
-
                     // Invite security council member
                     let ABI = ['function proposalSecurityKick(address)'];
                     let iface = new ethers.Interface(ABI);
@@ -1013,6 +1017,77 @@ export default function() {
 
                     // Member should no longer exists
                     assert.equal(await getDAOSecurityMemberIsValid(securityMember1), false, 'Member still exists in council');
+                });
+
+                it(printTitle('proposer', 'can not kick a security council member that does not exist'), async () => {
+                    // Setup
+                    await setDAOProtocolBootstrapSecurityInvite('Member', securityMember1, { from: owner });
+                    await daoSecurityMemberJoin({ from: securityMember1 });
+
+                    // Invite security council member
+                    let ABI = ['function proposalSecurityKick(address)'];
+                    let iface = new ethers.Interface(ABI);
+                    let proposalCalldata = iface.encodeFunctionData('proposalSecurityKick', [random.address]);
+
+                    // Create a valid proposal
+                    const {
+                        propId,
+                        leaves,
+                    } = await createValidProposal('Kick security member from the council', proposalCalldata);
+
+                    // Wait for proposal wait period to end
+                    await helpers.time.increase(voteDelayTime + 1);
+
+                    // Vote all in favour
+                    await voteAll(propId, leaves, voteStates.For);
+
+                    // Skip the full vote period
+                    await helpers.time.increase(votePhase1Time + votePhase2Time + 1);
+
+                    // Execute the proposal
+                    await shouldRevert(
+                        daoProtocolExecute(propId, { from: proposer }),
+                        'Was able to kick non-existing member',
+                        'This node is not part of the security council',
+                    );
+                });
+
+                it(printTitle('proposer', 'can replace a security council member'), async () => {
+                    // Setup
+                    await setDAOProtocolBootstrapSecurityInvite('Member', securityMember1, { from: owner });
+                    await daoSecurityMemberJoin({ from: securityMember1 });
+
+                    // Invite security council member
+                    let ABI = ['function proposalSecurityReplace(address, string, address)'];
+                    let iface = new ethers.Interface(ABI);
+                    let proposalCalldata = iface.encodeFunctionData('proposalSecurityReplace', [securityMember1.address, 'Replaced Member 1', random.address]);
+
+                    // Create a valid proposal
+                    const {
+                        propId,
+                        leaves,
+                    } = await createValidProposal('Replace security council member', proposalCalldata);
+
+                    // Wait for proposal wait period to end
+                    await helpers.time.increase(voteDelayTime + 1);
+
+                    // Vote all in favour
+                    await voteAll(propId, leaves, voteStates.For);
+
+                    // Skip the full vote period
+                    await helpers.time.increase(votePhase1Time + votePhase2Time + 1);
+
+                    // Execute the proposal
+                    await daoProtocolExecute(propId, { from: proposer });
+
+                    // Accept on new member address
+                    await daoSecurityMemberJoin({ from: random });
+
+                    // Old member should no longer exists
+                    assert.equal(await getDAOSecurityMemberIsValid(securityMember1), false, 'Member still exists in council');
+
+                    // New member should exit
+                    assert.equal(await getDAOSecurityMemberIsValid(random), true, 'Member is not in council');
                 });
 
                 /**
@@ -1525,6 +1600,71 @@ export default function() {
                         await shouldRevert(daoProtocolClaimBondChallenger(propId, [1], { from: proposer }), 'Claimed proposal bond', 'Invalid challenger');
                     });
                 });
+            });
+        });
+
+        describe('With allow listed controller', () => {
+            before(async () => {
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
+            });
+
+            it(printTitle('random', 'fails to update UARS parameters when not on allow list'), async () => {
+                await shouldRevert(setDaoProtocolNodeShareSecurityCouncilAdder('0.005'.ether, {
+                    from: random,
+                }), 'Was able to update node share security council adder', 'Not on allow list');
+                await shouldRevert(setDaoProtocolNodeCommissionShare('0.15'.ether, {
+                    from: random,
+                }), 'Was able to update node commission share', 'Not on allow list');
+                await shouldRevert(setDaoProtocolVoterShare('0.15'.ether, {
+                    from: random,
+                }), 'Was able to update voter share', 'Not on allow list');
+            });
+
+            it(printTitle('allow listed', 'can update node share security council adder if on allow list'), async () => {
+                await setDaoProtocolNodeShareSecurityCouncilAdder('0.005'.ether, { from: allowListed });
+            });
+
+            it(printTitle('allow listed', 'fails to update UARS parameter if removed from allow list'), async () => {
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [], { from: owner });
+                await shouldRevert(setDaoProtocolNodeShareSecurityCouncilAdder('0.005'.ether, {
+                    from: allowListed,
+                }), 'Was able to update node share security council adder', 'Not on allow list');
+            });
+
+            it(printTitle('allow listed', 'fails to set node share security council adder higher than max'), async () => {
+                const rocketDAOProtocolSettingsNetwork = await RocketDAOProtocolSettingsNetwork.deployed();
+                const maximum = await rocketDAOProtocolSettingsNetwork.getMaxNodeShareSecurityCouncilAdder();
+
+                // Set to max works
+                await setDaoProtocolNodeShareSecurityCouncilAdder(maximum, { from: allowListed });
+
+                // Set greater than max fails
+                await shouldRevert(setDaoProtocolNodeShareSecurityCouncilAdder(maximum + '0.00001'.ether, {
+                    from: allowListed,
+                }), 'Was able to update node share security council adder greater than max', 'Value must be <= max value');
+            });
+
+            it(printTitle('allow listed', 'fails to set voter share + node share > 100%'), async () => {
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
+
+                // Set voter and node to 50%
+                await setDaoProtocolNodeCommissionShare('0.5'.ether, { from: allowListed });
+                await setDaoProtocolVoterShare('0.5'.ether, { from: allowListed });
+
+                // Fail to then set node to 51%
+                await shouldRevert(setDaoProtocolNodeCommissionShare('0.51'.ether, {
+                    from: allowListed,
+                }), 'Was able to set rETH commission grater than 100%', 'rETH Commission must be <= 100%');
+            });
+
+            it(printTitle('allow listed', 'can update node commission share if on allow list'), async () => {
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
+                await setDaoProtocolNodeCommissionShare('0.10'.ether, { from: allowListed });
+            });
+
+            it(printTitle('allow listed', 'can update voter share if on allow list'), async () => {
+                await setDAOProtocolBootstrapSettingAddressList(RocketDAOProtocolSettingsNetwork, 'network.allow.listed.controllers', [allowListed.address], { from: owner });
+                await setDaoProtocolVoterShare('0.20'.ether, { from: allowListed });
             });
         });
     });

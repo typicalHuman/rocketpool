@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
-pragma solidity 0.8.18;
-pragma abicoder v2;
+pragma solidity 0.8.30;
 
-import "../../RocketBase.sol";
-import "../../../interface/dao/protocol/RocketDAOProtocolInterface.sol";
-import "../../../interface/dao/protocol/RocketDAOProtocolProposalsInterface.sol";
-import "../../../types/SettingType.sol";
+import {RocketStorageInterface} from "../../../interface/RocketStorageInterface.sol";
+import {RocketDAOProtocolInterface} from "../../../interface/dao/protocol/RocketDAOProtocolInterface.sol";
+import {RocketDAOProtocolProposalsInterface} from "../../../interface/dao/protocol/RocketDAOProtocolProposalsInterface.sol";
+import {SettingType} from "../../../types/SettingType.sol";
+import {RocketBase} from "../../RocketBase.sol";
 
-/// @notice The Rocket Pool Protocol DAO
+/// @notice The Rocket Pool Protocol DAO (pDAO)
 contract RocketDAOProtocol is RocketBase, RocketDAOProtocolInterface {
-
     // Events
     event BootstrapSettingMulti(string[] settingContractNames, string[] settingPaths, SettingType[] types, bytes[] values, uint256 time);
     event BootstrapSettingUint(string settingContractName, string settingPath, uint256 value, uint256 time);
     event BootstrapSettingBool(string settingContractName, string settingPath, bool value, uint256 time);
     event BootstrapSettingAddress(string settingContractName, string settingPath, address value, uint256 time);
+    event BootstrapSettingAddressList(string settingContractName, string settingPath, address[] value, uint256 time);
     event BootstrapSettingClaimers(uint256 trustedNodePercent, uint256 protocolPercent, uint256 nodePercent, uint256 time);
     event BootstrapSpendTreasury(string invoiceID, address recipientAddress, uint256 amount, uint256 time);
     event BootstrapTreasuryNewContract(string contractName, address recipientAddress, uint256 amountPerPeriod, uint256 periodLength, uint256 startTime, uint256 numPeriods, uint256 time);
@@ -34,7 +34,7 @@ contract RocketDAOProtocol is RocketBase, RocketDAOProtocolInterface {
     }
 
     constructor(RocketStorageInterface _rocketStorageAddress) RocketBase(_rocketStorageAddress) {
-        version = 2;
+        version = 3;
     }
 
     /**** DAO Properties **************/
@@ -76,6 +76,12 @@ contract RocketDAOProtocol is RocketBase, RocketDAOProtocolInterface {
         emit BootstrapSettingAddress(_settingContractName, _settingPath, _value, block.timestamp);
     }
 
+    /// @notice Bootstrap mode - Address list Setting
+    function bootstrapSettingAddressList(string memory _settingContractName, string memory _settingPath, address[] calldata _value) override external onlyGuardian onlyBootstrapMode onlyLatestContract("rocketDAOProtocol", address(this)) {
+        RocketDAOProtocolProposalsInterface(getContractAddress("rocketDAOProtocolProposals")).proposalSettingAddressList(_settingContractName, _settingPath, _value);
+        emit BootstrapSettingAddressList(_settingContractName, _settingPath, _value, block.timestamp);
+    }
+
     /// @notice Bootstrap mode - Set a claiming contract to receive a % of RPL inflation rewards
     function bootstrapSettingClaimers(uint256 _trustedNodePercent, uint256 _protocolPercent, uint256 _nodePercent) override external onlyGuardian onlyBootstrapMode onlyLatestContract("rocketDAOProtocol", address(this)) {
         RocketDAOProtocolProposalsInterface(getContractAddress("rocketDAOProtocolProposals")).proposalSettingRewardsClaimers(_trustedNodePercent, _protocolPercent, _nodePercent);
@@ -95,7 +101,7 @@ contract RocketDAOProtocol is RocketBase, RocketDAOProtocolInterface {
     }
 
     /// @notice Bootstrap mode - Update treasury contract
-    function bootstrapTreasuryUpdateContract(string memory _contractName, address _recipientAddress, uint256 _amountPerPeriod, uint256 _periodLength, uint256 _numPeriods) override external  onlyGuardian onlyBootstrapMode onlyLatestContract("rocketDAOProtocol", address(this)) {
+    function bootstrapTreasuryUpdateContract(string memory _contractName, address _recipientAddress, uint256 _amountPerPeriod, uint256 _periodLength, uint256 _numPeriods) override external onlyGuardian onlyBootstrapMode onlyLatestContract("rocketDAOProtocol", address(this)) {
         RocketDAOProtocolProposalsInterface(getContractAddress("rocketDAOProtocolProposals")).proposalTreasuryUpdateContract(_contractName, _recipientAddress, _amountPerPeriod, _periodLength, _numPeriods);
         emit BootstrapTreasuryUpdateContract(_contractName, _recipientAddress, _amountPerPeriod, _periodLength, _numPeriods, block.timestamp);
     }

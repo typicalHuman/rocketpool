@@ -8,6 +8,7 @@ import { mintRPL } from '../_helpers/tokens';
 import { userDeposit } from '../_helpers/deposit';
 import { globalSnapShot } from '../_utils/snapshotting';
 import { BigSqrt } from '../_helpers/bigmath';
+import { nodeDeposit, nodeDepositMulti } from '../_helpers/megapool';
 
 const helpers = require('@nomicfoundation/hardhat-network-helpers');
 const hre = require('hardhat');
@@ -39,9 +40,8 @@ export default function() {
             // Register node & set withdrawal address
             await registerNode({ from: node });
 
-            // Stake RPL to cover minipools
-            let minipoolRplStake = await getMinipoolMaximumRPLStake();
-            let rplStake = minipoolRplStake * 2n;
+            // Stake RPL for voting power
+            let rplStake = '1200'.ether;
             await mintRPL(owner, node, rplStake);
             await nodeStakeRPL(rplStake, { from: node });
 
@@ -51,16 +51,16 @@ export default function() {
 
         it(printTitle('Voting Power', 'Should correctly snapshot values'), async () => {
             // Create a minipool to set the active count to non-zero
-            await createMinipool({ from: node, value: '16'.ether });
+            await nodeDeposit(node, '4'.ether, false);
             const blockBefore = (await ethers.provider.getBlockNumber());
-            await createMinipool({ from: node, value: '16'.ether });
+            await nodeDeposit(node, '4'.ether, false);
             const blockAfter = (await ethers.provider.getBlockNumber());
 
             const votingPowerBefore = await networkVoting.getVotingPower(node, blockBefore);
             const votingPowerAfter = await networkVoting.getVotingPower(node, blockAfter);
 
-            assertBN.equal(votingPowerBefore, BigSqrt('2400'.ether * '1'.ether));
-            assertBN.equal(votingPowerAfter, BigSqrt('4800'.ether * '1'.ether));
+            assertBN.equal(votingPowerBefore, BigSqrt('600'.ether * '1'.ether));
+            assertBN.equal(votingPowerAfter, BigSqrt('1200'.ether * '1'.ether));
         });
     });
 }

@@ -1,100 +1,178 @@
-pragma solidity 0.7.6;
-
 // SPDX-License-Identifier: GPL-3.0-only
+pragma solidity 0.8.30;
 
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import {SafeCast} from "@openzeppelin4/contracts/utils/math/SafeCast.sol";
 
-import "../RocketBase.sol";
-import "../../interface/dao/node/RocketDAONodeTrustedInterface.sol";
-import "../../interface/network/RocketNetworkPenaltiesInterface.sol";
-import "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNetworkInterface.sol";
-import "../../interface/minipool/RocketMinipoolPenaltyInterface.sol";
+import {RocketDAONodeTrustedInterface} from "../../interface/dao/node/RocketDAONodeTrustedInterface.sol";
+import {RocketDAOProtocolSettingsMinipoolInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMinipoolInterface.sol";
+import {RocketDAOProtocolSettingsNetworkInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNetworkInterface.sol";
+import {RocketMinipoolPenaltyInterface} from "../../interface/minipool/RocketMinipoolPenaltyInterface.sol";
+import {RocketNetworkPenaltiesInterface} from "../../interface/network/RocketNetworkPenaltiesInterface.sol";
+import {RocketNetworkSnapshotsTimeInterface} from "../../interface/network/RocketNetworkSnapshotsTimeInterface.sol";
+import {RocketStorageInterface} from "../../interface/RocketStorageInterface.sol";
+import {RocketBase} from "../RocketBase.sol";
 
-// Minipool penalties
-
+/// @notice Applies penalties to minipools for MEV theft
 contract RocketNetworkPenalties is RocketBase, RocketNetworkPenaltiesInterface {
-
-    // Libs
-    using SafeMath for uint;
+    // Constants
+    uint256 constant internal penaltyMaximumPeriod = 7 days;
+    bytes32 constant internal penaltyKey = keccak256(abi.encodePacked("minipool.running.penalty"));
 
     // Events
-    event PenaltySubmitted(address indexed from, address minipoolAddress, uint256 block, uint256 time);
-    event PenaltyUpdated(address indexed minipoolAddress, uint256 penalty, uint256 time);
+    event PenaltySubmitted(address indexed from, address indexed minipool, uint256 block, uint256 time);
+    event PenaltyApplied(address indexed minipool, uint256 block, uint256 time);
+    event PenaltyUpdated(address indexed minipool, uint256 penalty, uint256 time);
 
     // Construct
     constructor(RocketStorageInterface _rocketStorageAddress) RocketBase(_rocketStorageAddress) {
-        version = 1;
+        version = 2;
     }
 
-    // Submit penalty for node operator non-compliance
-    function submitPenalty(address _minipoolAddress, uint256 _block) override external onlyLatestContract("rocketNetworkPenalties", address(this)) onlyTrustedNode(msg.sender) onlyRegisteredMinipool(_minipoolAddress) {
-        // Get contracts
-        RocketDAOProtocolSettingsNetworkInterface rocketDAOProtocolSettingsNetwork = RocketDAOProtocolSettingsNetworkInterface(getContractAddress("rocketDAOProtocolSettingsNetwork"));
+    /// @notice Returns the number of votes in favour of the given penalty
+    /// @param _minipool Address of the accused minipool
+    /// @param _block Block that the theft occurred (used for uniqueness)
+    function getVoteCount(address _minipool, uint256 _block) override external view returns (uint256) {
+        bytes32 submissionCountKey = keccak256(abi.encodePacked("minipool.penalty.submission", _minipool, _block));
+        return getUint(submissionCountKey);
+    }
+
+    /// @notice Votes to penalise a minipool for MEV theft (only callable by oDAO)
+    /// @param _minipool Address of the accused minipool
+    /// @param _block Block that the theft occurred (used for uniqueness)
+    function submitPenalty(address _minipool, uint256 _block) override external onlyTrustedNode(msg.sender) onlyRegisteredMinipool(_minipool) {
+        require(_block < block.number, "Invalid block number");
         // Get submission keys
-        bytes32 nodeSubmissionKey = keccak256(abi.encodePacked("network.penalties.submitted.node", msg.sender, _minipoolAddress, _block));
-        bytes32 submissionCountKey = keccak256(abi.encodePacked("network.penalties.submitted.count", _minipoolAddress, _block));
-        bytes32 executedKey = keccak256(abi.encodePacked("network.penalties.executed", _minipoolAddress, _block));
+        bytes32 nodeSubmissionKey = keccak256(abi.encodePacked("minipool.penalty.submission", msg.sender, _minipool, _block));
+        bytes32 submissionCountKey = keccak256(abi.encodePacked("minipool.penalty.submission", _minipool, _block));
         // Check & update node submission status
         require(!getBool(nodeSubmissionKey), "Duplicate submission from node");
-        require(!getBool(executedKey), "Penalty already applied for this block");
         setBool(nodeSubmissionKey, true);
         // Increment submission count
-        uint256 submissionCount = getUint(submissionCountKey).add(1);
+        uint256 submissionCount = getUint(submissionCountKey) + 1;
         setUint(submissionCountKey, submissionCount);
-        // Emit balances submitted event
-        emit PenaltySubmitted(msg.sender, _minipoolAddress, _block, block.timestamp);
-        // Check submission count & update network balances
+        // Maybe execute
+        _maybeApplyPenalty(_minipool, _block, submissionCount);
+        // Emit event
+        emit PenaltySubmitted(msg.sender, _minipool, _block, block.timestamp);
+    }
+
+    /// @notice Manually execute a penalty that has hit majority vote
+    /// @param _minipool Address of the accused minipool
+    /// @param _block Block that the theft occurred (used for uniqueness)
+    function executeUpdatePenalty(address _minipool, uint256 _block) override external {
+        // Get submission count
+        bytes32 submissionCountKey = keccak256(abi.encodePacked("minipool.penalty.submission", _minipool, _block));
+        uint256 submissionCount = getUint(submissionCountKey);
+        // Apply penalty if relevant conditions are met
+        _maybeApplyPenalty(_minipool, _block, submissionCount);
+    }
+
+    /// @notice Returns the running total of penalties at a given timestamp
+    /// @param _time The timestamp to compute running total for
+    function getPenaltyRunningTotalAtTime(uint64 _time) override external view returns (uint256) {
+        RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
+        return rocketNetworkSnapshotsTime.lookup(penaltyKey, _time);
+    }
+
+    /// @notice Returns the running total of penalties at the current time
+    function getCurrentPenaltyRunningTotal() override external view returns (uint256) {
+        RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
+        (,,uint192 value) =  rocketNetworkSnapshotsTime.latest(penaltyKey);
+        return uint256(value);
+    }
+
+    /// @notice Returns the current maximum penalty based on the running total limitation
+    function getCurrentMaxPenalty() override external view returns (uint256) {
+        // Get contracts
+        RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
+        RocketDAOProtocolSettingsMinipoolInterface rocketDAOProtocolSettingsMinipool = RocketDAOProtocolSettingsMinipoolInterface(getContractAddress("rocketDAOProtocolSettingsMinipool"));
+        // Grab max weekly penalty
+        uint256 maxPenalty = rocketDAOProtocolSettingsMinipool.getMaximumPenaltyCount();
+        // Get running total from 7 days ago
+        uint256 earlierTime = 0;
+        if (block.timestamp > penaltyMaximumPeriod) {
+            earlierTime = block.timestamp - penaltyMaximumPeriod;
+        }
+        uint256 earlierRunningTotal = uint256(rocketNetworkSnapshotsTime.lookup(penaltyKey, SafeCast.toUint64(earlierTime)));
+        // Get current running total
+        (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
+        // Cap the penalty at the maximum amount based on past 7 days
+        uint256 currentTotal = uint256(currentRunningTotal) - earlierRunningTotal;
+        if (currentTotal > maxPenalty) return 0;
+        return maxPenalty - currentTotal;
+    }
+
+    /// @dev If a penalty has not been applied and hit majority, execute the penalty
+    /// @param _minipool Address of the accused minipool
+    /// @param _block Block that the theft occurred (used for uniqueness)
+    function _maybeApplyPenalty(address _minipool, uint256 _block, uint256 _submissionCount) internal {
+        // Check this penalty hasn't already reach majority and been applied
+        bytes32 penaltyAppliedKey = keccak256(abi.encodePacked("minipool.penalty.submission.applied", _minipool, _block));
+        require(!getBool(penaltyAppliedKey), "Penalty already applied");
+        // Check for majority
         RocketDAONodeTrustedInterface rocketDAONodeTrusted = RocketDAONodeTrustedInterface(getContractAddress("rocketDAONodeTrusted"));
-        if (calcBase.mul(submissionCount).div(rocketDAONodeTrusted.getMemberCount()) >= rocketDAOProtocolSettingsNetwork.getNodePenaltyThreshold()) {
-            setBool(executedKey, true);
-            incrementMinipoolPenaltyCount(_minipoolAddress);
+        RocketDAOProtocolSettingsNetworkInterface rocketDAOProtocolSettingsNetwork = RocketDAOProtocolSettingsNetworkInterface(getContractAddress("rocketDAOProtocolSettingsNetwork"));
+        if (calcBase * _submissionCount / rocketDAONodeTrusted.getMemberCount() >= rocketDAOProtocolSettingsNetwork.getNodePenaltyThreshold()) {
+            // Apply penalty and mark as applied
+            setBool(penaltyAppliedKey, true);
+            _applyPenalty(_minipool);
+            // Emit event
+            emit PenaltyApplied(_minipool, _block, block.timestamp);
         }
     }
 
-    // Executes incrementMinipoolPenaltyCount if consensus threshold is reached
-    function executeUpdatePenalty(address _minipoolAddress, uint256 _block) override external onlyLatestContract("rocketNetworkPenalties", address(this)) {
+    /// @dev Applies a penalty up to given amount, honouring the max penalty parameter
+    function _applyPenalty(address _minipool) internal {
         // Get contracts
-        RocketDAOProtocolSettingsNetworkInterface rocketDAOProtocolSettingsNetwork = RocketDAOProtocolSettingsNetworkInterface(getContractAddress("rocketDAOProtocolSettingsNetwork"));
-        // Get submission keys
-        bytes32 submissionCountKey = keccak256(abi.encodePacked("network.penalties.submitted.count", _minipoolAddress, _block));
-        bytes32 executedKey = keccak256(abi.encodePacked("network.penalties.executed", _minipoolAddress, _block));
-        // Check whether it's been executed yet
-        require(!getBool(executedKey), "Penalty already applied for this block");
-        // Get submission count
-        uint256 submissionCount = getUint(submissionCountKey);
-        // Check submission count & update network balances
-        RocketDAONodeTrustedInterface rocketDAONodeTrusted = RocketDAONodeTrustedInterface(getContractAddress("rocketDAONodeTrusted"));
-        require(calcBase.mul(submissionCount).div(rocketDAONodeTrusted.getMemberCount()) >= rocketDAOProtocolSettingsNetwork.getNodePenaltyThreshold(), "Consensus has not been reached");
-        setBool(executedKey, true);
-        incrementMinipoolPenaltyCount(_minipoolAddress);
+        RocketNetworkSnapshotsTimeInterface rocketNetworkSnapshotsTime = RocketNetworkSnapshotsTimeInterface(getContractAddress("rocketNetworkSnapshotsTime"));
+        RocketDAOProtocolSettingsMinipoolInterface rocketDAOProtocolSettingsMinipool = RocketDAOProtocolSettingsMinipoolInterface(getContractAddress("rocketDAOProtocolSettingsMinipool"));
+        // Grab max weekly penalty
+        uint256 maxPenalty = rocketDAOProtocolSettingsMinipool.getMaximumPenaltyCount();
+        // Get running total from 7 days ago
+        uint256 earlierTime = 0;
+        if (block.timestamp > penaltyMaximumPeriod) {
+            earlierTime = block.timestamp - penaltyMaximumPeriod;
+        }
+        uint256 earlierRunningTotal = rocketNetworkSnapshotsTime.lookup(penaltyKey, SafeCast.toUint64(earlierTime));
+        // Get current running total
+        (,, uint192 currentRunningTotal) = rocketNetworkSnapshotsTime.latest(penaltyKey);
+        // Prevent the running penalty total from exceeding the maximum amount
+        uint256 currentTotal = uint256(currentRunningTotal) - earlierRunningTotal;
+        require(currentTotal < maxPenalty, "Max penalty exceeded");
+        uint256 currentMaxPenalty = maxPenalty - currentTotal;
+        // Insert new running total
+        rocketNetworkSnapshotsTime.push(penaltyKey, currentRunningTotal + 1);
+        // Increment the penalty count on this minipool
+        _incrementMinipoolPenaltyCount(_minipool);
     }
 
-    // Returns the number of penalties for a given minipool
-    function getPenaltyCount(address _minipoolAddress) override external view returns (uint256) {
-        return getUint(keccak256(abi.encodePacked("network.penalties.penalty", _minipoolAddress)));
+    /// @notice Returns the number of penalties for a given minipool
+    /// @param _minipool Address of the minipool to query
+    function getPenaltyCount(address _minipool) override external view returns (uint256) {
+        return getUint(keccak256(abi.encodePacked("network.penalties.penalty", _minipool)));
     }
 
-    // Increments the number of penalties against given minipool and updates penalty rate appropriately
-    function incrementMinipoolPenaltyCount(address _minipoolAddress) private {
+    /// @dev Increments the number of penalties against given minipool and updates penalty rate appropriately
+    function _incrementMinipoolPenaltyCount(address _minipool) internal {
         // Get contracts
         RocketDAOProtocolSettingsNetworkInterface rocketDAOProtocolSettingsNetwork = RocketDAOProtocolSettingsNetworkInterface(getContractAddress("rocketDAOProtocolSettingsNetwork"));
         // Calculate penalty count key
-        bytes32 key = keccak256(abi.encodePacked("network.penalties.penalty", _minipoolAddress));
+        bytes32 key = keccak256(abi.encodePacked("network.penalties.penalty", _minipool));
         // Get the current penalty count
-        uint256 newPenaltyCount = getUint(key).add(1);
+        uint256 newPenaltyCount = getUint(key) + 1;
         // Update the penalty count
         setUint(key, newPenaltyCount);
         // First two penalties do not increase penalty rate
         if (newPenaltyCount < 3) {
             return;
         }
-        newPenaltyCount = newPenaltyCount.sub(2);
+        newPenaltyCount = newPenaltyCount - 2;
         // Calculate the new penalty rate
-        uint256 penaltyRate = newPenaltyCount.mul(rocketDAOProtocolSettingsNetwork.getPerPenaltyRate());
+        uint256 penaltyRate = newPenaltyCount * rocketDAOProtocolSettingsNetwork.getPerPenaltyRate();
         // Set the penalty rate
         RocketMinipoolPenaltyInterface rocketMinipoolPenalty = RocketMinipoolPenaltyInterface(getContractAddress("rocketMinipoolPenalty"));
-        rocketMinipoolPenalty.setPenaltyRate(_minipoolAddress, penaltyRate);
+        rocketMinipoolPenalty.setPenaltyRate(_minipool, penaltyRate);
         // Emit penalty updated event
-        emit PenaltyUpdated(_minipoolAddress, penaltyRate, block.timestamp);
+        emit PenaltyUpdated(_minipool, penaltyRate, block.timestamp);
     }
 }

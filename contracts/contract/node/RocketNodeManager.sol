@@ -1,26 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-only
-pragma solidity 0.8.18;
-pragma abicoder v2;
+pragma solidity 0.8.30;
 
-import "../RocketBase.sol";
-import "../../types/MinipoolStatus.sol";
-import "../../types/NodeDetails.sol";
-import "../../interface/node/RocketNodeManagerInterface.sol";
-import "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNodeInterface.sol";
-import "../../interface/util/AddressSetStorageInterface.sol";
-import "../../interface/node/RocketNodeDistributorFactoryInterface.sol";
-import "../../interface/minipool/RocketMinipoolManagerInterface.sol";
-import "../../interface/node/RocketNodeDistributorInterface.sol";
-import "../../interface/dao/node/settings/RocketDAONodeTrustedSettingsRewardsInterface.sol";
-import "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsRewardsInterface.sol";
-import "../../interface/node/RocketNodeStakingInterface.sol";
-import "../../interface/node/RocketNodeDepositInterface.sol";
-import "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMinipoolInterface.sol";
-import "../../interface/util/IERC20.sol";
-import "../../interface/network/RocketNetworkSnapshotsInterface.sol";
+import {RocketStorageInterface} from "../../interface/RocketStorageInterface.sol";
+import {RocketVaultInterface} from "../../interface/RocketVaultInterface.sol";
+import {RocketVaultWithdrawerInterface} from "../../interface/RocketVaultWithdrawerInterface.sol";
+import {RocketDAONodeTrustedSettingsRewardsInterface} from "../../interface/dao/node/settings/RocketDAONodeTrustedSettingsRewardsInterface.sol";
+import {RocketDAOProtocolSettingsDepositInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsDepositInterface.sol";
+import {RocketDAOProtocolSettingsMinipoolInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsMinipoolInterface.sol";
+import {RocketDAOProtocolSettingsNodeInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNodeInterface.sol";
+import {RocketDAOProtocolSettingsRewardsInterface} from "../../interface/dao/protocol/settings/RocketDAOProtocolSettingsRewardsInterface.sol";
+import {RocketMegapoolFactoryInterface} from "../../interface/megapool/RocketMegapoolFactoryInterface.sol";
+import {RocketMinipoolInterface} from "../../interface/minipool/RocketMinipoolInterface.sol";
+import {RocketMinipoolManagerInterface} from "../../interface/minipool/RocketMinipoolManagerInterface.sol";
+import {RocketNetworkSnapshotsInterface} from "../../interface/network/RocketNetworkSnapshotsInterface.sol";
+import {RocketNodeDistributorFactoryInterface} from "../../interface/node/RocketNodeDistributorFactoryInterface.sol";
+import {RocketNodeManagerInterface} from "../../interface/node/RocketNodeManagerInterface.sol";
+import {RocketNodeStakingInterface} from "../../interface/node/RocketNodeStakingInterface.sol";
+import {AddressSetStorageInterface} from "../../interface/util/AddressSetStorageInterface.sol";
+import {MinipoolStatus} from "../../types/MinipoolStatus.sol";
+import {RocketBase} from "../RocketBase.sol";
 
 /// @notice Node registration and management
-contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
+contract RocketNodeManager is RocketBase, RocketNodeManagerInterface, RocketVaultWithdrawerInterface {
 
     // Events
     event NodeRegistered(address indexed node, uint256 time);
@@ -29,10 +30,15 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     event NodeSmoothingPoolStateChanged(address indexed node, bool state);
     event NodeRPLWithdrawalAddressSet(address indexed node, address indexed withdrawalAddress, uint256 time);
     event NodeRPLWithdrawalAddressUnset(address indexed node, uint256 time);
+    event NodeUnclaimedRewardsAdded(address indexed node, uint256 amount, uint256 time);
+    event NodeUnclaimedRewardsClaimed(address indexed node, uint256 amount, uint256 time);
 
     constructor(RocketStorageInterface _rocketStorageAddress) RocketBase(_rocketStorageAddress) {
-        version = 4;
+        version = 5;
     }
+
+    /// @dev Callback required to receive ETH withdrawal from the vault
+    function receiveVaultWithdrawalETH() override external payable onlyLatestContract("rocketNodeManager", address(this)) onlyLatestContract("rocketVault", msg.sender) {}
 
     /// @notice Get the number of nodes in the network
     function getNodeCount() override public view returns (uint256) {
@@ -41,6 +47,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Get a breakdown of the number of nodes per timezone
+    /// @dev Iterating the entire set may exceed gas limit so caller can paginate using _offset and _limit
     function getNodeCountPerTimezone(uint256 _offset, uint256 _limit) override external view returns (TimezoneCount[] memory) {
         // Get contracts
         AddressSetStorageInterface addressSetStorage = AddressSetStorageInterface(getContractAddress("addressSetStorage"));
@@ -49,7 +56,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         // Calculate range
         uint256 totalNodes = addressSetStorage.getCount(nodeKey);
         uint256 max = _offset + _limit;
-        if (max > totalNodes || _limit == 0) { max = totalNodes; }
+        if (max > totalNodes || _limit == 0) {max = totalNodes;}
         // Create an array with as many elements as there are potential values to return
         TimezoneCount[] memory counts = new TimezoneCount[](max - _offset);
         uint256 uniqueTimezoneCount = 0;
@@ -113,16 +120,19 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Get a node's pending RPL withdrawal address
+    /// @param _nodeAddress Address of the node to query
     function getNodePendingRPLWithdrawalAddress(address _nodeAddress) override public view returns (address) {
         return getAddress(keccak256(abi.encodePacked("node.pending.rpl.withdrawal.address", _nodeAddress)));
     }
 
     /// @notice Returns true if a node has set an RPL withdrawal address
+    /// @param _nodeAddress Address of the node to query
     function getNodeRPLWithdrawalAddressIsSet(address _nodeAddress) override external view returns (bool) {
-        return(getAddress(keccak256(abi.encodePacked("node.rpl.withdrawal.address", _nodeAddress))) != address(0));
+        return (getAddress(keccak256(abi.encodePacked("node.rpl.withdrawal.address", _nodeAddress))) != address(0));
     }
 
     /// @notice Unsets a node operator's RPL withdrawal address returning it to the default
+    /// @param _nodeAddress Address of the node to query
     function unsetRPLWithdrawalAddress(address _nodeAddress) external override onlyRegisteredNode(_nodeAddress) {
         bytes32 addressKey = keccak256(abi.encodePacked("node.rpl.withdrawal.address", _nodeAddress));
         // Confirm the transaction is from the node's current RPL withdrawal address
@@ -134,6 +144,9 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     // @notice Set a node's RPL withdrawal address
+    /// @param _nodeAddress Address of the node to set RPL withdrawal address for
+    /// @param _newRPLWithdrawalAddress The new RPL withdrawal address to set
+    /// @param _confirm Whether to instantly make the change or requires a confirmation from the new address
     function setRPLWithdrawalAddress(address _nodeAddress, address _newRPLWithdrawalAddress, bool _confirm) external override onlyRegisteredNode(_nodeAddress) {
         // Check new RPL withdrawal address
         require(_newRPLWithdrawalAddress != address(0x0), "Invalid RPL withdrawal address");
@@ -147,13 +160,14 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
             // Perform the update
             updateRPLWithdrawalAddress(_nodeAddress, _newRPLWithdrawalAddress);
         }
-        // Set pending withdrawal address if not confirmed
         else {
+            // Set pending withdrawal address immediately
             setAddress(keccak256(abi.encodePacked("node.pending.rpl.withdrawal.address", _nodeAddress)), _newRPLWithdrawalAddress);
         }
     }
 
     /// @notice Confirm a node's new RPL withdrawal address
+    /// @param _nodeAddress Address of the node to confirm new RPL withdrawal address for
     function confirmRPLWithdrawalAddress(address _nodeAddress) external override onlyRegisteredNode(_nodeAddress) {
         bytes32 pendingKey = keccak256(abi.encodePacked("node.pending.rpl.withdrawal.address", _nodeAddress));
         // Get node by pending withdrawal address
@@ -163,25 +177,30 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         updateRPLWithdrawalAddress(_nodeAddress, msg.sender);
     }
 
-    /// @notice Update a node's withdrawal address
-    function updateRPLWithdrawalAddress(address _nodeAddress, address _newWithdrawalAddress) private {
+    /// @dev Internal implementation of updating a node's RPL withdrawal address
+    /// @param _nodeAddress Address of the node to set RPL withdrawal address for
+    /// @param _newRPLWithdrawalAddress The new RPL withdrawal address to set
+    function updateRPLWithdrawalAddress(address _nodeAddress, address _newRPLWithdrawalAddress) private {
         // Set new withdrawal address
-        setAddress(keccak256(abi.encodePacked("node.rpl.withdrawal.address", _nodeAddress)), _newWithdrawalAddress);
+        setAddress(keccak256(abi.encodePacked("node.rpl.withdrawal.address", _nodeAddress)), _newRPLWithdrawalAddress);
         // Emit withdrawal address set event
-        emit NodeRPLWithdrawalAddressSet(_nodeAddress, _newWithdrawalAddress, block.timestamp);
+        emit NodeRPLWithdrawalAddressSet(_nodeAddress, _newRPLWithdrawalAddress, block.timestamp);
     }
 
     /// @notice Get a node's timezone location
+    /// @param _nodeAddress Address of the node to query
     function getNodeTimezoneLocation(address _nodeAddress) override public view returns (string memory) {
         return getString(keccak256(abi.encodePacked("node.timezone.location", _nodeAddress)));
     }
 
     /// @notice Register a new node with Rocket Pool
+    /// @param _timezoneLocation Timezone of the node operator (used only as a hint to the protocol about its geographic diversity)
     function registerNode(string calldata _timezoneLocation) override external onlyLatestContract("rocketNodeManager", address(this)) {
         // Load contracts
         RocketDAOProtocolSettingsNodeInterface rocketDAOProtocolSettingsNode = RocketDAOProtocolSettingsNodeInterface(getContractAddress("rocketDAOProtocolSettingsNode"));
         AddressSetStorageInterface addressSetStorage = AddressSetStorageInterface(getContractAddress("addressSetStorage"));
         RocketNetworkSnapshotsInterface rocketNetworkSnapshots = RocketNetworkSnapshotsInterface(getContractAddress("rocketNetworkSnapshots"));
+        RocketDAOProtocolSettingsDepositInterface rocketDAOProtocolSettingsDeposit = RocketDAOProtocolSettingsDepositInterface(getContractAddress("rocketDAOProtocolSettingsDeposit"));
         // Check node settings
         require(rocketDAOProtocolSettingsNode.getRegistrationEnabled(), "Rocket Pool node registrations are currently disabled");
         // Check timezone location
@@ -190,11 +209,11 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         setBool(keccak256(abi.encodePacked("node.exists", msg.sender)), true);
         setBool(keccak256(abi.encodePacked("node.voting.enabled", msg.sender)), true);
         setString(keccak256(abi.encodePacked("node.timezone.location", msg.sender)), _timezoneLocation);
+        setBool(keccak256(abi.encodePacked("node.express.provisioned", msg.sender)), true);
+        setUint(keccak256(abi.encodePacked("node.express.tickets", msg.sender)), rocketDAOProtocolSettingsDeposit.getExpressQueueTicketsBaseProvision());
         // Add node to index
         bytes32 nodeIndexKey = keccak256(abi.encodePacked("nodes.index"));
         addressSetStorage.addItem(nodeIndexKey, msg.sender);
-        // Initialise fee distributor for this node
-        _initialiseFeeDistributor(msg.sender);
         // Set node registration time (uses old storage key name for backwards compatibility)
         setUint(keccak256(abi.encodePacked("rewards.pool.claim.contract.registered.time", "rocketClaimNode", msg.sender)), block.timestamp);
         // Update count
@@ -206,11 +225,13 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Gets the timestamp of when a node was registered
+    /// @param _nodeAddress Address of the node to query
     function getNodeRegistrationTime(address _nodeAddress) onlyRegisteredNode(_nodeAddress) override public view returns (uint256) {
         return getUint(keccak256(abi.encodePacked("rewards.pool.claim.contract.registered.time", "rocketClaimNode", _nodeAddress)));
     }
 
     /// @notice Set a node's timezone location
+    /// @param _timezoneLocation New timezone of the node operator
     function setTimezoneLocation(string calldata _timezoneLocation) override external onlyLatestContract("rocketNodeManager", address(this)) onlyRegisteredNode(msg.sender) {
         // Check timezone location
         require(bytes(_timezoneLocation).length >= 4, "The timezone location is invalid");
@@ -221,6 +242,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Returns true if node has initialised their fee distributor contract
+    /// @param _nodeAddress Address of the node to query
     function getFeeDistributorInitialised(address _nodeAddress) override public view returns (bool) {
         // Load contracts
         RocketNodeDistributorFactoryInterface rocketNodeDistributorFactory = RocketNodeDistributorFactoryInterface(getContractAddress("rocketNodeDistributorFactory"));
@@ -235,6 +257,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Node operators created before the distributor was implemented must call this to setup their distributor contract
+    /// @dev Fee distributor is no longer used but this function is provided for backwards compatibility for existing node operators who never initialised theirs
     function initialiseFeeDistributor() override external onlyLatestContract("rocketNodeManager", address(this)) onlyRegisteredNode(msg.sender) {
         // Prevent multiple calls
         require(!getFeeDistributorInitialised(msg.sender), "Already initialised");
@@ -242,12 +265,12 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         RocketMinipoolManagerInterface rocketMinipoolManager = RocketMinipoolManagerInterface(getContractAddress("rocketMinipoolManager"));
         // Calculate and set current average fee numerator
         uint256 count = rocketMinipoolManager.getNodeMinipoolCount(msg.sender);
-        if (count > 0){
+        if (count > 0) {
             uint256 numerator = 0;
             // Note: this loop is safe as long as all current node operators at the time of upgrade have few enough minipools
             for (uint256 i = 0; i < count; ++i) {
                 RocketMinipoolInterface minipool = RocketMinipoolInterface(rocketMinipoolManager.getNodeMinipoolAt(msg.sender, i));
-                if (minipool.getStatus() == MinipoolStatus.Staking){
+                if (minipool.getStatus() == MinipoolStatus.Staking) {
                     numerator = numerator + minipool.getNodeFee();
                 }
             }
@@ -257,7 +280,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         _initialiseFeeDistributor(msg.sender);
     }
 
-    /// @notice Deploys the fee distributor contract for a given node
+    /// @dev Deploys the fee distributor contract for a given node
     function _initialiseFeeDistributor(address _nodeAddress) internal {
         // Load contracts
         RocketNodeDistributorFactoryInterface rocketNodeDistributorFactory = RocketNodeDistributorFactoryInterface(getContractAddress("rocketNodeDistributorFactory"));
@@ -265,14 +288,16 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         rocketNodeDistributorFactory.createProxy(_nodeAddress);
     }
 
-    /// @notice Calculates a nodes average node fee
+    /// @notice Calculates a node's average node fee (for minipools)
+    /// @param _nodeAddress Address of the node to query
     function getAverageNodeFee(address _nodeAddress) override external view returns (uint256) {
         // Load contracts
         RocketMinipoolManagerInterface rocketMinipoolManager = RocketMinipoolManagerInterface(getContractAddress("rocketMinipoolManager"));
-        RocketNodeDepositInterface rocketNodeDeposit = RocketNodeDepositInterface(getContractAddress("rocketNodeDeposit"));
         RocketDAOProtocolSettingsMinipoolInterface rocketDAOProtocolSettingsMinipool = RocketDAOProtocolSettingsMinipoolInterface(getContractAddress("rocketDAOProtocolSettingsMinipool"));
         // Get valid deposit amounts
-        uint256[] memory depositSizes = rocketNodeDeposit.getDepositAmounts();
+        uint256[2] memory depositSizes;
+        depositSizes[0] = 16 ether;
+        depositSizes[1] = 8 ether;
         // Setup memory for calculations
         uint256[] memory depositWeights = new uint256[](depositSizes.length);
         uint256[] memory depositCounts = new uint256[](depositSizes.length);
@@ -313,7 +338,9 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Designates which network a node would like their rewards relayed to
-    function setRewardNetwork(address _nodeAddress, uint256 _network) override external onlyLatestContract("rocketNodeManager", address(this)) {
+    /// @param _nodeAddress Address of the node to set reward network for
+    /// @param _network ID of the network
+    function setRewardNetwork(address _nodeAddress, uint256 _network) override external onlyLatestContract("rocketNodeManager", address(this)) onlyRegisteredNode(_nodeAddress) {
         // Confirm the transaction is from the node's current withdrawal address
         address withdrawalAddress = rocketStorage.getNodeWithdrawalAddress(_nodeAddress);
         require(withdrawalAddress == msg.sender, "Only a tx from a node's withdrawal address can change reward network");
@@ -327,11 +354,13 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Returns which network a node has designated as their desired reward network
+    /// @param _nodeAddress Address of the node to query
     function getRewardNetwork(address _nodeAddress) override public view onlyLatestContract("rocketNodeManager", address(this)) returns (uint256) {
         return getUint(keccak256(abi.encodePacked("node.reward.network", _nodeAddress)));
     }
 
     /// @notice Allows a node to register or deregister from the smoothing pool
+    /// @param _state True to opt in to the smoothing pool or false otherwise
     function setSmoothingPoolRegistrationState(bool _state) override external onlyLatestContract("rocketNodeManager", address(this)) onlyRegisteredNode(msg.sender) {
         // Ensure registration is enabled
         RocketDAOProtocolSettingsNodeInterface daoSettingsNode = RocketDAOProtocolSettingsNodeInterface(getContractAddress("rocketDAOProtocolSettingsNode"));
@@ -355,11 +384,13 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
     }
 
     /// @notice Returns whether a node is registered or not from the smoothing pool
+    /// @param _nodeAddress Address of the node to query
     function getSmoothingPoolRegistrationState(address _nodeAddress) override public view returns (bool) {
         return getBool(keccak256(abi.encodePacked("node.smoothing.pool.state", _nodeAddress)));
     }
 
     /// @notice Returns the timestamp of when the node last changed their smoothing pool registration state
+    /// @param _nodeAddress Address of the node to query
     function getSmoothingPoolRegistrationChanged(address _nodeAddress) override external view returns (uint256) {
         return getUint(keccak256(abi.encodePacked("node.smoothing.pool.changed.time", _nodeAddress)));
     }
@@ -373,7 +404,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         // Iterate over the requested minipool range
         uint256 totalNodes = getNodeCount();
         uint256 max = _offset + _limit;
-        if (max > totalNodes || _limit == 0) { max = totalNodes; }
+        if (max > totalNodes || _limit == 0) {max = totalNodes;}
         uint256 count = 0;
         for (uint256 i = _offset; i < max; ++i) {
             address nodeAddress = addressSetStorage.getItem(nodeKey, i);
@@ -384,54 +415,9 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         return count;
     }
 
-    /// @notice Convenience function to return all on-chain details about a given node
-    /// @param _nodeAddress Address of the node to query details for
-    function getNodeDetails(address _nodeAddress) override public view returns (NodeDetails memory nodeDetails) {
-        // Get contracts
-        RocketNodeStakingInterface rocketNodeStaking = RocketNodeStakingInterface(getContractAddress("rocketNodeStaking"));
-        RocketNodeDepositInterface rocketNodeDeposit = RocketNodeDepositInterface(getContractAddress("rocketNodeDeposit"));
-        RocketNodeDistributorFactoryInterface rocketNodeDistributorFactory = RocketNodeDistributorFactoryInterface(getContractAddress("rocketNodeDistributorFactory"));
-        RocketMinipoolManagerInterface rocketMinipoolManager = RocketMinipoolManagerInterface(getContractAddress("rocketMinipoolManager"));
-        IERC20 rocketTokenRETH = IERC20(getContractAddress("rocketTokenRETH"));
-        IERC20 rocketTokenRPL = IERC20(getContractAddress("rocketTokenRPL"));
-        IERC20 rocketTokenRPLFixedSupply = IERC20(getContractAddress("rocketTokenRPLFixedSupply"));
-        // Node details
-        nodeDetails.nodeAddress = _nodeAddress;
-        nodeDetails.withdrawalAddress = rocketStorage.getNodeWithdrawalAddress(_nodeAddress);
-        nodeDetails.pendingWithdrawalAddress = rocketStorage.getNodePendingWithdrawalAddress(_nodeAddress);
-        nodeDetails.exists = getNodeExists(_nodeAddress);
-        nodeDetails.registrationTime = getNodeRegistrationTime(_nodeAddress);
-        nodeDetails.timezoneLocation = getNodeTimezoneLocation(_nodeAddress);
-        nodeDetails.feeDistributorInitialised = getFeeDistributorInitialised(_nodeAddress);
-        nodeDetails.rewardNetwork = getRewardNetwork(_nodeAddress);
-        // Staking details
-        nodeDetails.rplStake = rocketNodeStaking.getNodeRPLStake(_nodeAddress);
-        nodeDetails.effectiveRPLStake = rocketNodeStaking.getNodeEffectiveRPLStake(_nodeAddress);
-        nodeDetails.minimumRPLStake = rocketNodeStaking.getNodeMinimumRPLStake(_nodeAddress);
-        nodeDetails.maximumRPLStake = rocketNodeStaking.getNodeMaximumRPLStake(_nodeAddress);
-        nodeDetails.ethMatched = rocketNodeStaking.getNodeETHMatched(_nodeAddress);
-        nodeDetails.ethMatchedLimit = rocketNodeStaking.getNodeETHMatchedLimit(_nodeAddress);
-        // Distributor details
-        nodeDetails.feeDistributorAddress = rocketNodeDistributorFactory.getProxyAddress(_nodeAddress);
-        uint256 distributorBalance = nodeDetails.feeDistributorAddress.balance;
-        RocketNodeDistributorInterface distributor = RocketNodeDistributorInterface(nodeDetails.feeDistributorAddress);
-        nodeDetails.distributorBalanceNodeETH = distributor.getNodeShare();
-        nodeDetails.distributorBalanceUserETH = distributorBalance - nodeDetails.distributorBalanceNodeETH;
-        // Minipool details
-        nodeDetails.minipoolCount = rocketMinipoolManager.getNodeMinipoolCount(_nodeAddress);
-        // Balance details
-        nodeDetails.balanceETH = _nodeAddress.balance;
-        nodeDetails.balanceRETH = rocketTokenRETH.balanceOf(_nodeAddress);
-        nodeDetails.balanceRPL = rocketTokenRPL.balanceOf(_nodeAddress);
-        nodeDetails.balanceOldRPL = rocketTokenRPLFixedSupply.balanceOf(_nodeAddress);
-        nodeDetails.depositCreditBalance = rocketNodeDeposit.getNodeDepositCredit(_nodeAddress);
-        // Return
-        return nodeDetails;
-    }
-
     /// @notice Returns a slice of the node operator address set
-    /// @param _offset The starting point into the slice
-    /// @param _limit The maximum number of results to return
+    /// @param _offset The starting point for the slice
+    /// @param _limit The maximum number of results to return in the slice
     function getNodeAddresses(uint256 _offset, uint256 _limit) override external view returns (address[] memory) {
         // Get contracts
         AddressSetStorageInterface addressSetStorage = AddressSetStorageInterface(getContractAddress("addressSetStorage"));
@@ -440,7 +426,7 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
         // Iterate over the requested minipool range
         uint256 totalNodes = getNodeCount();
         uint256 max = _offset + _limit;
-        if (max > totalNodes || _limit == 0) { max = totalNodes; }
+        if (max > totalNodes || _limit == 0) {max = totalNodes;}
         // Create array big enough for every minipool
         address[] memory nodes = new address[](max - _offset);
         uint256 total = 0;
@@ -453,5 +439,116 @@ contract RocketNodeManager is RocketBase, RocketNodeManagerInterface {
             mstore(nodes, total)
         }
         return nodes;
+    }
+
+    /// @notice Deploys a single Megapool contract for the calling node operator
+    function deployMegapool() override external onlyLatestContract("rocketNodeManager", address(this)) onlyRegisteredNode(msg.sender) returns (address) {
+        RocketMegapoolFactoryInterface rocketMegapool = RocketMegapoolFactoryInterface(getContractAddress("rocketMegapoolFactory"));
+        require(!rocketMegapool.getMegapoolDeployed(msg.sender), "Megapool already deployed for this node");
+        return rocketMegapool.deployContract(msg.sender);
+    }
+
+    /// @notice Returns the number of express tickets the given node has
+    /// @param _nodeAddress Address of the node operator to query
+    function getExpressTicketCount(address _nodeAddress) public override view returns (uint256) {
+        bool provisioned = getBool(keccak256(abi.encodePacked("node.express.provisioned", _nodeAddress)));
+        uint256 expressTickets = 0;
+        if (!provisioned) {
+            // Nodes prior to Saturn should receive 0 express tickets (initial value of `express_queue_tickets_base_provision`) (RPIP-75)
+            expressTickets += 0;
+            // Each node SHALL be provided additional express_queue_tickets equal to (bonded ETH in legacy minipools)/4
+            RocketNodeStakingInterface rocketNodeStaking = RocketNodeStakingInterface(getContractAddress("rocketNodeStaking"));
+            uint256 bondedETH = rocketNodeStaking.getNodeETHBonded(_nodeAddress);
+            expressTickets += bondedETH / 4 ether;
+        }
+        expressTickets += getUint(keccak256(abi.encodePacked("node.express.tickets", _nodeAddress)));
+        return expressTickets;
+    }
+
+    /// @notice Consumes an express ticket for the given node operator
+    /// @param _nodeAddress Address of the node operator to consume express ticket for
+    function useExpressTicket(address _nodeAddress) external override onlyLatestContract("rocketNodeManager", address(this)) onlyLatestContract("rocketDepositPool", msg.sender) {
+        uint256 tickets = getExpressTicketCount(_nodeAddress);
+        require(tickets > 0, "No express tickets");
+        tickets -= 1;
+        setBool(keccak256(abi.encodePacked("node.express.provisioned", _nodeAddress)), true);
+        setUint(keccak256(abi.encodePacked("node.express.tickets", _nodeAddress)), tickets);
+    }
+
+    /// @notice Calculates a node operator's entitled express tickets and stores them
+    /// @param _nodeAddress Address of the node operator to provision
+    function provisionExpressTickets(address _nodeAddress) external override onlyLatestContract("rocketNodeManager", address(this)) onlyRegisteredNode(_nodeAddress) {
+        bytes32 provisionedKey = keccak256(abi.encodePacked("node.express.provisioned", _nodeAddress));
+        if (getBool(provisionedKey)) {
+            return;
+        }
+        uint256 tickets = getExpressTicketCount(_nodeAddress);
+        setBool(provisionedKey, true);
+        setUint(keccak256(abi.encodePacked("node.express.tickets", _nodeAddress)), tickets);
+    }
+
+    /// @notice Returns true if express tickets have been provisioned for the given node
+    /// @param _nodeAddress Address of the node operator to query
+    function getExpressTicketsProvisioned(address _nodeAddress) external override view returns (bool) {
+        bytes32 provisionedKey = keccak256(abi.encodePacked("node.express.provisioned", _nodeAddress));
+        return getBool(provisionedKey);
+    }
+
+    /// @notice Refunds an express ticket for the given node operator
+    /// @param _nodeAddress Address of the node operator to refund express ticket for
+    function refundExpressTicket(address _nodeAddress) external override onlyLatestContract("rocketNodeManager", address(this)) onlyLatestContract("rocketDepositPool", msg.sender) {
+        // Refunds can only occur after the use of a ticket which guarantees tickets were provisioned
+        addUint(keccak256(abi.encodePacked("node.express.tickets", _nodeAddress)), 1);
+    }
+
+    /// @notice Convenience function to return the megapool address for a node if it is deployed, otherwise null address
+    /// @param _nodeAddress Address of the node to query
+    function getMegapoolAddress(address _nodeAddress) override external view returns (address) {
+        RocketMegapoolFactoryInterface rocketMegapoolFactory = RocketMegapoolFactoryInterface(getContractAddress("rocketMegapoolFactory"));
+        if (rocketMegapoolFactory.getMegapoolDeployed(_nodeAddress)) {
+            return rocketMegapoolFactory.getExpectedAddress(_nodeAddress);
+        }
+        return address(0x0);
+    }
+
+    /// @notice Returns the amount of unclaimed ETH rewards for a given node operator
+    /// @param _nodeAddress Address of the node operator
+    function getUnclaimedRewards(address _nodeAddress) external view returns (uint256) {
+        return getUint(keccak256(abi.encodePacked("node.unclaimed.rewards", _nodeAddress)));
+    }
+
+    /// @notice Add funds to a node's unclaimed balance
+    /// @dev Used when a withdrawal address is unable to accept ETH rewards and allows node operator to claim them later
+    /// @param _nodeAddress Address of the node operator to increase unclaimed rewards for
+    function addUnclaimedRewards(address _nodeAddress) external payable onlyRegisteredNode(_nodeAddress) {
+        // Only a node's distributor can add unclaimed rewards
+        RocketNodeDistributorFactoryInterface rocketNodeDistributorFactor = RocketNodeDistributorFactoryInterface(getContractAddress("rocketNodeDistributorFactory"));
+        address proxyAddress = rocketNodeDistributorFactor.getProxyAddress(_nodeAddress);
+        require(msg.sender == proxyAddress, "Only distributor can add unclaimed rewards");
+        // Deposit funds into vault and increase balance
+        RocketVaultInterface rocketVault = RocketVaultInterface(getContractAddress("rocketVault"));
+        rocketVault.depositEther{value: msg.value}();
+        addUint(keccak256(abi.encodePacked("node.unclaimed.rewards", _nodeAddress)), msg.value);
+        // Emit event
+        emit NodeUnclaimedRewardsAdded(_nodeAddress, msg.value, block.timestamp);
+    }
+
+    /// @notice Sends any unclaimed rewards to node operator's withdrawal address
+    /// @param _nodeAddress Address of the node operator
+    function claimUnclaimedRewards(address _nodeAddress) external onlyRegisteredNode(_nodeAddress) {
+        address withdrawalAddress = rocketStorage.getNodeWithdrawalAddress(_nodeAddress);
+        require(msg.sender == _nodeAddress || msg.sender == withdrawalAddress, "Only node can claim");
+        // Retrieve unclaimed rewards amount and reset balance
+        bytes32 key = keccak256(abi.encodePacked("node.unclaimed.rewards", _nodeAddress));
+        uint256 amount = getUint(key);
+        setUint(key, 0);
+        // Withdraw ETH from vault
+        RocketVaultInterface rocketVault = RocketVaultInterface(getContractAddress("rocketVault"));
+        rocketVault.withdrawEther(amount);
+        // Transfer to node operator's withdrawal address
+        (bool success,) = withdrawalAddress.call{value: amount}("");
+        require(success, "Failed to send funds to withdrawal address");
+        // Emit event
+        emit NodeUnclaimedRewardsClaimed(_nodeAddress, amount, block.timestamp);
     }
 }

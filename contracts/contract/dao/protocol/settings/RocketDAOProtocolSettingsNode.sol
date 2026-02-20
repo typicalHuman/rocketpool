@@ -1,43 +1,60 @@
-pragma solidity 0.7.6;
-
 // SPDX-License-Identifier: GPL-3.0-only
+pragma solidity 0.8.30;
 
-import "./RocketDAOProtocolSettings.sol";
-import "../../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNodeInterface.sol";
-import "../../../../interface/network/RocketNetworkSnapshotsInterface.sol";
+import {RocketStorageInterface} from "../../../../interface/RocketStorageInterface.sol";
+import {RocketDAOProtocolSettings} from "./RocketDAOProtocolSettings.sol";
+import {RocketDAOProtocolSettingsNodeInterface} from "../../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNodeInterface.sol";
+import {RocketNetworkSnapshotsInterface} from "../../../../interface/network/RocketNetworkSnapshotsInterface.sol";
 
-// Network auction settings
-
+/// @notice Network auction settings
 contract RocketDAOProtocolSettingsNode is RocketDAOProtocolSettings, RocketDAOProtocolSettingsNodeInterface {
+    uint256 constant internal milliToWei = 10 ** 15;
 
     // Construct
     constructor(RocketStorageInterface _rocketStorageAddress) RocketDAOProtocolSettings(_rocketStorageAddress, "node") {
         // Set version
-        version = 4;
-        // Initialize settings on deployment
-        if(!getBool(keccak256(abi.encodePacked(settingNameSpace, "deployed")))) {
-            // Apply settings
+        version = 5;
+        // Initialise settings on deployment
+        if (!rocketStorage.getDeployedStatus()) {
+            // Set defaults
             setSettingBool("node.registration.enabled", false);
             setSettingBool("node.smoothing.pool.registration.enabled", true);
             setSettingBool("node.deposit.enabled", false);
             setSettingBool("node.vacant.minipools.enabled", false);
-            setSettingUint("node.per.minipool.stake.minimum", 0.1 ether);      // 10% of user ETH value (matched ETH)
-            setSettingUint("node.per.minipool.stake.maximum", 1.5 ether);      // 150% of node ETH value (provided ETH)
-            // Settings initialised
+            _setSettingUint("reduced.bond", 4 ether);                           // 4 ETH (RPIP-42)
+            _setSettingUint("node.unstaking.period", 28 days);                  // 28 days (RPIP-30)
+            _setSettingUint("node.withdrawal.cooldown", 0);                     // No cooldown (RPIP-30)
+            _setSettingUint("node.minimum.legacy.staked.rpl", 0.15 ether);      // 15% of borrowed ETH (RPIP-30)
+            // Update deployed flag
             setBool(keccak256(abi.encodePacked(settingNameSpace, "deployed")), true);
         }
     }
 
     /// @notice Update a setting, overrides inherited setting method with extra checks for this contract
     function setSettingUint(string memory _settingPath, uint256 _value) override public onlyDAOProtocolProposal {
-        bytes32 settingKey = keccak256(bytes(_settingPath));
-        if(settingKey == keccak256(bytes("node.voting.power.stake.maximum"))) {
-            // Redirect the setting change to push a new value into the snapshot system instead
-            RocketNetworkSnapshotsInterface rocketNetworkSnapshots = RocketNetworkSnapshotsInterface(getContractAddress("rocketNetworkSnapshots"));
-            rocketNetworkSnapshots.push(settingKey, uint224(_value));
-            return;
+        if(getBool(keccak256(abi.encodePacked(settingNameSpace, "deployed")))) {
+            bytes32 settingKey = keccak256(bytes(_settingPath));
+            if(settingKey == keccak256(bytes("node.voting.power.stake.maximum"))) {
+                require(_value >= 1 ether && _value <= 5 ether, "Value must be >= 100% & <= 500%");
+                // Redirect the setting change to push a new value into the snapshot system instead
+                RocketNetworkSnapshotsInterface rocketNetworkSnapshots = RocketNetworkSnapshotsInterface(getContractAddress("rocketNetworkSnapshots"));
+                rocketNetworkSnapshots.push(settingKey, uint224(_value));
+                return;
+            } else if(settingKey == keccak256(bytes("reduced.bond"))) {
+                require(_value % milliToWei == 0, "Value must be divisible by milliwei");
+                require(_value >= 1 ether && _value <= 4 ether, "Value must be >= 1 ETH & <= 4 ETH");
+            } else if(settingKey == keccak256(bytes("node.unstaking.period"))) {
+                require(_value <= 6 weeks, "Value must be <= 6 weeks");
+            } else if(settingKey == keccak256(bytes("node.withdrawal.cooldown"))) {
+                require(_value <= 6 weeks, "Value must be <= 6 weeks");
+            }
         }
         // Update setting now
+        _setSettingUint(_settingPath, _value);
+    }
+
+    /// @dev Directly updates a setting, no guardrails applied
+    function _setSettingUint(string memory _settingPath, uint256 _value) internal {
         setUint(keccak256(abi.encodePacked(settingNameSpace, _settingPath)), _value);
     }
 
@@ -61,20 +78,38 @@ contract RocketDAOProtocolSettingsNode is RocketDAOProtocolSettings, RocketDAOPr
         return getSettingBool("node.vacant.minipools.enabled");
     }
 
-    // Minimum RPL stake per minipool as a fraction of assigned user ETH value
-    function getMinimumPerMinipoolStake() override external view returns (uint256) {
-        return getSettingUint("node.per.minipool.stake.minimum");
-    }
-
-    // Maximum RPL stake per minipool as a fraction of assigned user ETH value
-    function getMaximumPerMinipoolStake() override external view returns (uint256) {
-        return getSettingUint("node.per.minipool.stake.maximum");
-    }
-
     // Maximum staked RPL that applies to voting power per minipool as a fraction of assigned user ETH value
     function getMaximumStakeForVotingPower() override external view returns (uint256) {
         bytes32 settingKey = keccak256(bytes("node.voting.power.stake.maximum"));
         RocketNetworkSnapshotsInterface rocketNetworkSnapshots = RocketNetworkSnapshotsInterface(getContractAddress("rocketNetworkSnapshots"));
         return uint256(rocketNetworkSnapshots.latestValue(settingKey));
+    }
+
+    /// @notice Returns the `reduced_bond` variable used in bond requirements calculation
+    function getReducedBond() override external view returns (uint256) {
+        return getSettingUint("reduced.bond");
+    }
+
+    /// @notice Returns the `base_bond_array` mapping of number of validators to cumulative bond requirement
+    function getBaseBondArray() override public pure returns (uint256[] memory) {
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 4 ether;
+        amounts[1] = 8 ether;
+        return amounts;
+    }
+
+    /// @notice Returns the amount of time that must be waited after unstaking RPL before it can be returned
+    function getUnstakingPeriod() override external view returns (uint256) {
+        return getSettingUint("node.unstaking.period");
+    }
+
+    /// @notice Returns the amount of time that must be waited after staking RPL before it can be unstaked again
+    function getWithdrawalCooldown() override external view returns (uint256) {
+        return getSettingUint("node.withdrawal.cooldown");
+    }
+
+    /// @notice Returns the amount of legacy staked RPL required by a node after unstaking as percentage of their borrowed ETH
+    function getMinimumLegacyRPLStake() override external view returns (uint256) {
+        return getSettingUint("node.minimum.legacy.staked.rpl");
     }
 }

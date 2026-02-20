@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
-pragma solidity 0.8.18;
+pragma solidity 0.8.30;
 
-import "../../RocketBase.sol";
-import "../../../interface/dao/security/RocketDAOSecurityInterface.sol";
-import "../../../interface/dao/security/RocketDAOSecurityProposalsInterface.sol";
-import "../../../interface/rewards/claims/RocketClaimDAOInterface.sol";
-import "../../../interface/dao/RocketDAOProposalInterface.sol";
-import "../../../interface/node/RocketNodeManagerInterface.sol";
-import "../../../types/SettingType.sol";
-
-import "../../../interface/dao/security/RocketDAOSecurityActionsInterface.sol";
-import "../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsSecurityInterface.sol";
+import {RocketBase} from "../../RocketBase.sol";
+import {RocketStorageInterface} from "../../../interface/RocketStorageInterface.sol";
+import {RocketVaultInterface} from "../../../interface/RocketVaultInterface.sol";
+import {RocketDAOProposalInterface} from "../../../interface/dao/RocketDAOProposalInterface.sol";
+import {RocketDAOProtocolInterface} from "../../../interface/dao/protocol/RocketDAOProtocolInterface.sol";
+import {RocketDAOProtocolSettingsSecurityInterface} from "../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsSecurityInterface.sol";
+import {RocketDAOProtocolSettingsNetworkInterface} from "../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsNetworkInterface.sol";
+import {RocketDAOSecurityActionsInterface} from "../../../interface/dao/security/RocketDAOSecurityActionsInterface.sol";
+import {RocketDAOSecurityInterface} from "../../../interface/dao/security/RocketDAOSecurityInterface.sol";
+import {RocketDAOSecurityProposalsInterface} from "../../../interface/dao/security/RocketDAOSecurityProposalsInterface.sol";
+import {RocketNetworkRevenuesInterface} from "../../../interface/network/RocketNetworkRevenuesInterface.sol";
+import {IERC20Burnable} from "../../../interface/util/IERC20Burnable.sol";
 
 /// @notice Proposal contract for the security council
 contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInterface {
@@ -21,10 +23,10 @@ contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInt
     // The namespace of the DAO that setting changes get applied to (protocol DAO)
     string constant internal protocolDaoSettingNamespace = "dao.protocol.setting.";
 
-    // Only allow certain contracts to execute methods
+    /// @dev Only allow certain contracts to execute methods
     modifier onlyExecutingContracts() {
-        // Methods are either executed by bootstrapping methods in rocketDAONodeTrusted or by people executing passed proposals in rocketDAOProposal
-        require(msg.sender == getContractAddress("rocketDAOProtocol") || msg.sender == getContractAddress("rocketDAOProposal"), "Sender is not permitted to access executing methods");
+        // Methods are executed by people executing passed proposals in rocketDAOProposal
+        require(msg.sender == getContractAddress("rocketDAOProposal"), "Sender is not permitted to access executing methods");
         _;
     }
 
@@ -42,8 +44,9 @@ contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInt
         _;
     }
 
+    // Construct
     constructor(RocketStorageInterface _rocketStorageAddress) RocketBase(_rocketStorageAddress) {
-        version = 1;
+        version = 2;
     }
 
     /// @notice Creates a new proposal for this DAO
@@ -98,6 +101,24 @@ contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInt
     function proposalSettingUint(string memory _settingNameSpace, string memory _settingPath, uint256 _value) override public onlyExecutingContracts() onlyValidSetting(_settingNameSpace, _settingPath) {
         bytes32 namespace = keccak256(abi.encodePacked(protocolDaoSettingNamespace, _settingNameSpace));
         setUint(keccak256(abi.encodePacked(namespace, _settingPath)), _value);
+
+        // Security council adder requires additional processing
+        if (keccak256(bytes(_settingNameSpace)) == keccak256(bytes("network"))) {
+            if (keccak256(bytes(_settingPath)) == keccak256(bytes("network.node.commission.share.security.council.adder"))) {
+                RocketDAOProtocolSettingsNetworkInterface rocketDAOProtocolSettingsNetwork = RocketDAOProtocolSettingsNetworkInterface(getContractAddress("rocketDAOProtocolSettingsNetwork"));
+
+                // Check guardrails
+                uint256 maxAdderValue = rocketDAOProtocolSettingsNetwork.getMaxNodeShareSecurityCouncilAdder();
+                require(_value <= maxAdderValue, "Value must be <= max value");
+                uint256 maxVoterValue = rocketDAOProtocolSettingsNetwork.getVoterShare();
+                require(_value <= maxVoterValue, "Value must be <= voter share");
+
+                // Notify RocketNetworkRevenue of the changes to voter and node share
+                RocketNetworkRevenuesInterface rocketNetworkRevenues = RocketNetworkRevenuesInterface(getContractAddress("rocketNetworkRevenues"));
+                rocketNetworkRevenues.setVoterShare(rocketDAOProtocolSettingsNetwork.getEffectiveVoterShare());
+                rocketNetworkRevenues.setNodeShare(rocketDAOProtocolSettingsNetwork.getEffectiveNodeShare());
+            }
+        }
     }
 
     /// @notice Change one of the current bool settings of the protocol DAO
@@ -135,7 +156,10 @@ contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInt
     /// @param _memberAddress The address of the member to kick
     function proposalKick(address _memberAddress) override public onlyLatestContract("rocketDAOProtocolProposals", msg.sender) {
         // Load contracts
+        RocketDAOSecurityInterface daoSecurity = RocketDAOSecurityInterface(getContractAddress("rocketDAOSecurity"));
         RocketDAOSecurityActionsInterface daoActionsContract = RocketDAOSecurityActionsInterface(getContractAddress("rocketDAOSecurityActions"));
+        // Check valid member
+        require(daoSecurity.getMemberIsValid(_memberAddress), "This node is not part of the security council");
         // Kick them now
         daoActionsContract.actionKick(_memberAddress);
     }
@@ -144,7 +168,12 @@ contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInt
     /// @param _memberAddresses An array of addresses of the members to kick
     function proposalKickMulti(address[] calldata _memberAddresses) override public onlyLatestContract("rocketDAOProtocolProposals", msg.sender) {
         // Load contracts
+        RocketDAOSecurityInterface daoSecurity = RocketDAOSecurityInterface(getContractAddress("rocketDAOSecurity"));
         RocketDAOSecurityActionsInterface daoActionsContract = RocketDAOSecurityActionsInterface(getContractAddress("rocketDAOSecurityActions"));
+        // Check valid members
+        for (uint256 i = 0; i < _memberAddresses.length; ++i) {
+            require(daoSecurity.getMemberIsValid(_memberAddresses[i]), "This node is not part of the security council");
+        }
         // Kick them now
         daoActionsContract.actionKickMulti(_memberAddresses);
     }
@@ -154,6 +183,12 @@ contract RocketDAOSecurityProposals is RocketBase, RocketDAOSecurityProposalsInt
     /// @param _newMemberId A unique identifier for the new member
     /// @param _newMemberAddress The address of the member to invite
     function proposalReplace(address _existingMemberAddress, string calldata _newMemberId, address _newMemberAddress) override external onlyLatestContract("rocketDAOProtocolProposals", msg.sender) {
+        // Load contracts
+        RocketDAOSecurityInterface daoSecurity = RocketDAOSecurityInterface(getContractAddress("rocketDAOSecurity"));
+        // Check valid member
+        require(daoSecurity.getMemberIsValid(_existingMemberAddress), "This node is not part of the security council");
+        require(_existingMemberAddress != _newMemberAddress, "New member address must not be the same");
+        // Kick and invite
         proposalKick(_existingMemberAddress);
         proposalInvite(_newMemberId, _newMemberAddress);
     }

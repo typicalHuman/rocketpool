@@ -23,17 +23,15 @@ module.exports = {
                 version: '0.7.6',
                 settings: {
                     optimizer: {
-                        enabled: true,
-                        runs: 15000,
+                        enabled: false,
                     },
                 },
             },
             {
-                version: '0.8.18',
+                version: '0.8.30',
                 settings: {
                     optimizer: {
-                        enabled: true,
-                        runs: 15000,
+                        enabled: false,
                     },
                 },
             },

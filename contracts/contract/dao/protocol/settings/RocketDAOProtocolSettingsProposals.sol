@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-pragma solidity 0.8.18;
+pragma solidity 0.8.30;
 
 import "./RocketDAOProtocolSettings.sol";
 import "../../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsProposalsInterface.sol";
@@ -8,7 +8,7 @@ import "../../../../interface/dao/protocol/settings/RocketDAOProtocolSettingsPro
 contract RocketDAOProtocolSettingsProposals is RocketDAOProtocolSettings, RocketDAOProtocolSettingsProposalsInterface {
 
     constructor(RocketStorageInterface _rocketStorageAddress) RocketDAOProtocolSettings(_rocketStorageAddress, "proposals") {
-        version = 2;
+        version = 3;
         // Initialize settings on deployment
         if(!getBool(keccak256(abi.encodePacked(settingNameSpace, "deployed")))) {
             // Init settings
@@ -19,8 +19,8 @@ contract RocketDAOProtocolSettingsProposals is RocketDAOProtocolSettings, Rocket
             setSettingUint("proposal.bond", 100 ether);                     // The amount of RPL a proposer has to put up as a bond for creating a new proposal
             setSettingUint("proposal.challenge.bond", 10 ether);            // The amount of RPL a challenger has to put up as a bond for challenging a proposal
             setSettingUint("proposal.challenge.period", 30 minutes);        // The amount of time a proposer has to respond to a challenge before a proposal is defeated
-            setSettingUint("proposal.quorum", 0.51 ether);                  // The quorum required to pass a proposal
-            setSettingUint("proposal.veto.quorum", 0.51 ether);             // The quorum required to veto a proposal
+            setSettingUint("proposal.quorum", 0.15 ether);                  // The quorum required to pass a proposal (RPIP-64)
+            setSettingUint("proposal.veto.quorum", 0.20 ether);             // The quorum required to veto a proposal (RPIP-64)
             setSettingUint("proposal.max.block.age", 1024);                 // The maximum age of a block a proposal can be raised at
             // Settings initialised
             setBool(keccak256(abi.encodePacked(settingNameSpace, "deployed")), true);
@@ -56,12 +56,12 @@ contract RocketDAOProtocolSettingsProposals is RocketDAOProtocolSettings, Rocket
             // Must be >= 15% & < 75% (RPIP-63)
             require(_value >= 0.15 ether && _value < 0.75 ether, "Value must be >= 15% & < 75%");
         } else if(settingKey == keccak256(bytes("proposal.veto.quorum"))) {
-            // Must be >= 51% & < 75% (RPIP-33)
-            require(_value >= 0.51 ether && _value < 0.75 ether, "Value must be >= 51% & < 75%");
+            // Must be >= 20% & < 75% (RPIP-64)
+            require(_value >= 0.20 ether && _value < 0.75 ether, "Value must be >= 20% & < 75%");
         } else if(settingKey == keccak256(bytes("proposal.max.block.age"))) {
             // Must be > 128 blocks & < 7200 blocks (RPIP-33)
             require(_value > 128 && _value < 7200, "Value must be > 128 blocks & < 7200 blocks");
-        } 
+        }
         // Update setting now
         setUint(keccak256(abi.encodePacked(settingNameSpace, _settingPath)), _value);
     }

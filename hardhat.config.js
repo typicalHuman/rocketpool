@@ -1,5 +1,6 @@
 require('hardhat-gas-reporter');
 require('solidity-coverage');
+require('hardhat-ignore-warnings');
 
 let common = require('./hardhat-common.config.js');
 
@@ -11,6 +12,7 @@ const providerUrl = process.env.PROVIDER_URL || 'http://localhost:8545';
 module.exports = Object.assign(common, {
     networks: {
         hardhat: {
+            allowUnlimitedContractSize: true,
             accounts: {
                 count: 50,
                 accountsBalance: '10000000000000000000000000',
@@ -36,4 +38,13 @@ module.exports = Object.assign(common, {
     gasReporter: {
         enabled: !!process.env.REPORT_GAS,
     },
+    warnings: {
+        '@openzeppelin/**/*': {
+            default: 'off'
+        },
+        '*': {
+            'func-mutability': 'off',
+            'unused-param': 'off',
+        }
+    }
 });

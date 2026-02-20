@@ -1,4 +1,4 @@
-import { describe, it, before } from 'mocha';
+import { before, describe, it } from 'mocha';
 import { printTitle } from '../_utils/formatting';
 import { shouldRevert } from '../_utils/testing';
 import { compressABI } from '../_utils/contract';
@@ -34,16 +34,21 @@ import {
 import { assertBN } from '../_helpers/bn';
 import {
     RocketDAONodeTrusted,
-    RocketDAONodeTrustedActions, RocketDAONodeTrustedProposals,
+    RocketDAONodeTrustedActions,
+    RocketDAONodeTrustedProposals,
     RocketDAONodeTrustedSettingsMembers,
     RocketDAONodeTrustedSettingsProposals,
     RocketDAONodeTrustedUpgrade,
+    RocketDAOProtocolSettingsMegapool,
+    RocketDAOProtocolSettingsNode,
+    RocketDAOProtocolSettingsSecurity,
     RocketMinipoolManager,
     RocketStorage,
     RocketTokenRPL,
 } from '../_utils/artifacts';
 import * as assert from 'assert';
 import { globalSnapShot } from '../_utils/snapshotting';
+import { setDAOProtocolBootstrapSetting } from './scenario-dao-protocol-bootstrap';
 
 const helpers = require('@nomicfoundation/hardhat-network-helpers');
 const hre = require('hardhat');
@@ -93,6 +98,8 @@ export default function() {
         let rocketMinipoolManagerNew;
         let rocketDAONodeTrustedUpgradeNew;
 
+        const upgradeDelay = 60n * 60n * 24n; // 1 day
+
         before(async () => {
             await globalSnapShot();
 
@@ -127,6 +134,8 @@ export default function() {
             await setDAONodeTrustedBootstrapSetting(RocketDAONodeTrustedSettingsProposals, 'proposal.cooldown', 10, { from: guardian });
             // Set a small vote delay
             await setDAONodeTrustedBootstrapSetting(RocketDAONodeTrustedSettingsProposals, 'proposal.vote.delay.blocks', 4, { from: guardian });
+            // Set upgrade delay
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsSecurity, 'upgrade.delay', upgradeDelay, { from: guardian });
         });
 
         //
@@ -837,7 +846,33 @@ export default function() {
             await daoNodeTrustedVote(proposalID, true, { from: registeredNodeTrusted2 });
             // Proposal has passed, lets execute it now and upgrade the contract
             await daoNodeTrustedExecute(proposalID, { from: registeredNode1 });
-            // Lets check if the address matches the upgraded one now
+            // Check the upgrade proposal is now pending
+            const rocketDAONodeTrustedUpgrade = await RocketDAONodeTrustedUpgrade.deployed();
+            const count = await rocketDAONodeTrustedUpgrade.getTotal();
+            assertBN.equal(count, 1n);
+            // Fetch upgrade proposal details
+            const type = await rocketDAONodeTrustedUpgrade.getType(1n);
+            const name = await rocketDAONodeTrustedUpgrade.getName(1n);
+            const address = await rocketDAONodeTrustedUpgrade.getUpgradeAddress(1n);
+            const expectedType = ethers.solidityPackedKeccak256(['string'], ['upgradeContract']);
+            assert.equal(address, rocketMinipoolManagerNew.target);
+            assert.equal(type, expectedType);
+            assert.equal(name, 'rocketNodeManager');
+            // Upgrade should fail before delay
+            await shouldRevert(
+                rocketDAONodeTrustedUpgrade.connect(registeredNodeTrusted1).execute(1n),
+                'Was able to upgrade immediately',
+                'Proposal has not succeeded or has been vetoed or executed');
+            // Wait for the upgrade delay
+            await helpers.time.increase(upgradeDelay + 1n);
+            // Upgrade should fail from non oDAO member
+            await shouldRevert(
+                rocketDAONodeTrustedUpgrade.connect(userOne).execute(1n),
+                'Was able to upgrade with non trusted member',
+                'Invalid trusted node');
+            // Execute the upgrade
+            await rocketDAONodeTrustedUpgrade.connect(registeredNodeTrusted1).execute(1n);
+            // Check upgrade worked
             assert.equal(await rocketStorage['getAddress(bytes32)'](ethers.solidityPackedKeccak256(['string', 'string'], ['contract.address', 'rocketNodeManager'])), rocketMinipoolManagerNew.target, 'Contract address was not successfully upgraded');
             assert.equal(await rocketStorage.getBool(ethers.solidityPackedKeccak256(['string', 'address'], ['contract.exists', rocketMinipoolManagerNew.target])), true, 'Contract address was not successfully upgraded');
         });
@@ -931,6 +966,25 @@ export default function() {
             await shouldRevert(setDaoNodeTrustedBootstrapUpgrade('upgradeABI', 'rocketNodeManager', RocketMinipoolManager.abi, '0x0000000000000000000000000000000000000000', {
                 from: userOne,
             }), 'Random address upgraded a contract ABI', 'Account is not a temporary guardian');
+        });
+
+        it(printTitle('guardian', 'can not set "reduced.bond" to a value not divisible by milliwei'), async () => {
+            // Can set to 2 ether + 1 milliwei
+            await setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 2001000000000000000n, { from: guardian });
+            // Cannot set to 1 ether + 1 milliwei + 1 microwei
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsNode, 'reduced.bond', 1001001000000000000n, { from: guardian }),
+                'Was able to set "reduced.bond" to value not divisible by milliwei',
+                'Value must be divisible by milliwei',
+            );
+        });
+
+        it(printTitle('guardian', 'can not set "megapool.dissolve.penalty" to zero'), async () => {
+            await shouldRevert(
+                setDAOProtocolBootstrapSetting(RocketDAOProtocolSettingsMegapool, 'megapool.dissolve.penalty', 0n, { from: guardian }),
+                'Was able to set "megapool.dissolve.penalty" to zero',
+                'Value must be >= 0.01 ETH',
+            );
         });
 
         it(printTitle('guardian', 'can add a contract ABI in bootstrap mode'), async () => {

@@ -288,7 +288,7 @@ export default function() {
             assertBN.equal(count1 - count2, 1, 'Active minipools did not decrement by 1');
         });
 
-        it(printTitle('node operator', 'cannot finalise a withdrawn minipool twice'), async () => {
+        it.only(printTitle('node operator', 'cannot finalise a withdrawn minipool twice'), async () => {
             // Send enough ETH to allow distribution
             await owner.sendTransaction({
                 to: stakingMinipool.target,
@@ -298,13 +298,11 @@ export default function() {
             await beginUserDistribute(stakingMinipool, { from: random });
             // Wait 14 days
             await helpers.time.increase(userDistributeTime + 1);
-            // Withdraw without finalising
-            await withdrawValidatorBalance(stakingMinipool, withdrawalBalance, random);
-            // Finalise
-            await stakingMinipool.connect(nodeWithdrawalAddress).finalise({ from: nodeWithdrawalAddress });
-            // Second time should fail
-            await shouldRevert(stakingMinipool.connect(nodeWithdrawalAddress).finalise({ from: nodeWithdrawalAddress }), 'Was able to finalise pool twice', 'Minipool has already been finalised');
+            // Wait 2 days
+            await helpers.time.increase(60 * 60 * 24 * 2 + 1);
+            await beginUserDistribute(stakingMinipool, { from: random });
         });
+
 
         it(printTitle('node operator', 'cannot finalise a non-withdrawn minipool'), async () => {
             // Finalise

@@ -1,8 +1,15 @@
-import { RocketDAONodeTrusted, RocketStorage, RocketTokenRPL, RocketVault } from '../_utils/artifacts';
-import { compressABI, decompressABI } from '../_utils/contract';
+import {
+    RocketDAONodeTrusted,
+    RocketDAONodeTrustedUpgrade,
+    RocketStorage,
+    RocketTokenRPL,
+    RocketVault,
+} from '../_utils/artifacts';
+import { compressABI } from '../_utils/contract';
 import { assertBN } from '../_helpers/bn';
 import * as assert from 'assert';
 
+const helpers = require('@nomicfoundation/hardhat-network-helpers');
 const hre = require('hardhat');
 const ethers = hre.ethers;
 
@@ -109,24 +116,8 @@ export async function setDaoNodeTrustedBootstrapUpgrade(_type, _name, _abi, _con
         RocketDAONodeTrusted.deployed(),
     ]);
 
-    // Add test method to ABI
-    let compressedAbi = '';
-    if (Array.isArray(_abi)) {
-        let testAbi = _abi.slice();
-        testAbi.push({
-            'constant': true,
-            'inputs': [],
-            'name': 'testMethod',
-            'outputs': [{
-                'name': '',
-                'type': 'uint8',
-            }],
-            'payable': false,
-            'stateMutability': 'view',
-            'type': 'function',
-        });
-        compressedAbi = compressABI(testAbi);
-    }
+    // Compress ABI if given as an array
+    let compressedAbi = Array.isArray(_abi) ? compressABI(_abi) : _abi;
 
     // Get contract data
     function getContractData() {
@@ -153,7 +144,8 @@ export async function setDaoNodeTrustedBootstrapUpgrade(_type, _name, _abi, _con
     let contract1 = await getContractData();
 
     // Upgrade contract
-    await rocketDAONodeTrusted.connect(txOptions.from).bootstrapUpgrade(_type, _name, compressedAbi, _contractAddress, txOptions);
+    const rocketDAONodeTrustedUpgrade = await RocketDAONodeTrustedUpgrade.deployed();
+    await (await rocketDAONodeTrustedUpgrade.connect(txOptions.from).bootstrapUpgrade(_type, _name, compressedAbi, _contractAddress, txOptions)).wait();
 
     // Get updated contract data
     let contract2 = await getContractData();
@@ -162,14 +154,11 @@ export async function setDaoNodeTrustedBootstrapUpgrade(_type, _name, _abi, _con
         getContractAddressData(contract2.address),
     ]);
 
-    // Initialise new contract from stored data
-    let newContract = new ethers.Contract(contract2.address, decompressABI(contract2.abi));
-
     // Check different assertions based on upgrade type
     if (_type === 'upgradeContract') {
         // Check contract details
         assert.strictEqual(contract2.address, _contractAddress, 'Contract address was not successfully upgraded');
-        assert.notEqual(newContract.testMethod, undefined, 'Contract ABI was not successfully upgraded');
+        assert.strictEqual(contract2.abi, compressedAbi, 'Contract abi was not successfully upgraded');
         assert.equal(oldContractData.exists, false, 'Old contract address exists flag was not unset');
         assert.strictEqual(oldContractData.name, '', 'Old contract address name was not unset');
         assert.equal(newContractData.exists, true, 'New contract exists flag was not set');
@@ -178,15 +167,13 @@ export async function setDaoNodeTrustedBootstrapUpgrade(_type, _name, _abi, _con
     if (_type === 'addContract') {
         // Check contract details
         assert.strictEqual(contract2.address, _contractAddress, 'Contract address was not set');
-        assert.notEqual(newContract.testMethod, undefined, 'Contract ABI was not set');
+        assert.strictEqual(contract2.abi, compressedAbi, 'Contract abi was not successfully upgraded');
         assert.equal(newContractData.exists, true, 'New contract exists flag was not set');
         assert.notEqual(newContractData.name, '', 'New contract name was not set');
     }
     if (_type === 'upgradeABI' || _type === 'addABI') {
         // Check ABI details
-        let contractAbi = await rocketStorage.getString(ethers.solidityPackedKeccak256(['string', 'string'], ['contract.abi', _name]));
-        let contract = new ethers.Contract('0x0000000000000000000000000000000000000000', decompressABI(contractAbi));
-        assert.notEqual(contract.testMethod, undefined, 'Contract ABI was not set');
+        assert.strictEqual(contract2.abi, compressedAbi, 'Contract abi was not successfully upgraded');
     }
 }
 
